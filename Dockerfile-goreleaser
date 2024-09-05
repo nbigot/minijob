@@ -1,0 +1,9 @@
+FROM alpine:3.17
+RUN apk --no-cache add curl
+WORKDIR /app
+RUN mkdir -p /app/config
+COPY config-templates/docker/config/config.yaml /app/config/config.yaml
+COPY minijob /app/minijob
+EXPOSE 8080/tcp
+HEALTHCHECK CMD curl -f http://localhost:8080/api/v1/utils/ping || exit 1
+CMD ["/app/minijob", "-config", "/app/config/config.yaml"]
