@@ -19,7 +19,7 @@ import (
 // @ID utils-home
 // @Produce plain
 // @Tags Utils
-// @Success 200 {string}
+// @Success 200 {string} string "Welcome to MiniJob!"
 // @Router / [get]
 func (w *WebAPIServer) Home(c *fiber.Ctx) error {
 	return c.SendString("Welcome to MiniJob!")

@@ -16,7 +16,7 @@ import (
 // @ID jobs-get-all
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultGetAllJobs{} "successful operation"
 // @Router /api/v1/jobs/ [get]
 func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetAllJobs")
@@ -37,10 +37,10 @@ func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(
-		JSONResult{
+		JSONResultGetAllJobs{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Data:    jobs,
+			Jobs:    jobs,
 		},
 	)
 }
@@ -51,7 +51,7 @@ func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 // @ID jobs-delete-all
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/jobs/ [delete]
 func (w *WebAPIServer) DeleteAllJobs(c *fiber.Ctx) error {
 	c.Locals("metricName", "DeleteAllJobs")
@@ -86,10 +86,10 @@ func (w *WebAPIServer) DeleteAllJobs(c *fiber.Ctx) error {
 // @Produce json
 // @Tags Jobs
 // @Param jobuuid path string true "Job UUID"
-// @Success 200 {object} JobResponse "Job details"
-// @Failure 400 {object} ErrorResponse "Invalid UUID"
-// @Failure 404 {object} ErrorResponse "Job not found"
-// @Failure 500 {object} ErrorResponse "Invalid job"
+// @success 200 {object} web.JSONResultGetJob{} "successful operation"
+// @Failure 400 {object} apierror.APIError "Invalid UUID"
+// @Failure 404 {object} apierror.APIError "Job not found"
+// @Failure 500 {object} apierror.APIError "Invalid job"
 // @Router /api/v1/job/{jobuuid} [get]
 func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetJob")
@@ -135,10 +135,10 @@ func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(
-		JSONResult{
+		JSONResultGetJob{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Data:    job,
+			Job:     job,
 		},
 	)
 }
@@ -149,7 +149,7 @@ func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 // @ID job-create
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultCreateJob{} "successful operation"
 // @Router /api/v1/job/ [post]
 func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CreateJob")
@@ -210,7 +210,14 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 		}
 		return apiErr.HTTPResponse(c)
 	}
-	return c.JSON(job)
+
+	return c.JSON(
+		JSONResultCreateJob{
+			Code:    fiber.StatusOK,
+			Message: "success",
+			Job:     job,
+		},
+	)
 }
 
 // DeleteJob godoc
@@ -219,7 +226,7 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 // @ID job-delete
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/job/{jobuuid} [delete]
 func (w *WebAPIServer) DeleteJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "DeleteJob")
@@ -259,7 +266,7 @@ func (w *WebAPIServer) DeleteJob(c *fiber.Ctx) error {
 // @ID job-clone
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultCloneJob{} "successful operation"
 // @Router /api/v1/job/{jobuuid}/clone [post]
 func (w *WebAPIServer) CloneJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CloneJob")
@@ -285,7 +292,13 @@ func (w *WebAPIServer) CloneJob(c *fiber.Ctx) error {
 		return apiErr.HTTPResponse(c)
 	}
 
-	return c.JSON(job)
+	return c.JSON(
+		JSONResultCloneJob{
+			Code:    fiber.StatusOK,
+			Message: "success",
+			Job:     job,
+		},
+	)
 }
 
 // PullJob godoc
@@ -294,7 +307,7 @@ func (w *WebAPIServer) CloneJob(c *fiber.Ctx) error {
 // @ID job-pull
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultPullJob{} "successful operation"
 // @Router /api/v1/job/pull [post]
 func (w *WebAPIServer) PullJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "PullJob")
@@ -320,10 +333,10 @@ func (w *WebAPIServer) PullJob(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(
-		JSONResult{
+		JSONResultPullJob{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Data:    res,
+			Jobs:    res.Jobs,
 		},
 	)
 }
@@ -380,7 +393,7 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 // @ID job-cancel
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/job/{jobuuid}/cancel [post]
 func (w *WebAPIServer) CancelJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CancelJob")
@@ -420,7 +433,7 @@ func (w *WebAPIServer) CancelJob(c *fiber.Ctx) error {
 // @ID job-set-as-successful
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/job/{jobuuid}/succeed [post]
 func (w *WebAPIServer) SetJobAsSuccessful(c *fiber.Ctx) error {
 	c.Locals("metricName", "SetJobAsSuccessful")
@@ -460,7 +473,7 @@ func (w *WebAPIServer) SetJobAsSuccessful(c *fiber.Ctx) error {
 // @ID job-set-as-failed
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/job/{jobuuid}/fail [post]
 func (w *WebAPIServer) FailJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "FailJob")
@@ -500,7 +513,7 @@ func (w *WebAPIServer) FailJob(c *fiber.Ctx) error {
 // @ID job-change-visibility-timeout
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/job/{jobuuid}/visibilitytimeout [post]
 func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "ChangeVisibilityTimeoutJob")
@@ -547,7 +560,7 @@ func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 // @ID job-monitor
 // @Produce json
 // @Tags Jobs
-// @Success 200 {object}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/jobs/monitor [get]
 func (w *WebAPIServer) JobsMonitor(c *fiber.Ctx) error {
 	c.Locals("metricName", "JobsMonitor")

@@ -43,25 +43,25 @@ const (
 )
 
 type JobHistoryEvent struct {
-	EventType string `json:"eventType"` // EventType is the event type (required)
-	Timestamp int64  `json:"timestamp"` // Timestamp is the event timestamp (unixmilliseconds) (required)
+	EventType string `json:"eventType"` // The event type (required)
+	Timestamp int64  `json:"timestamp"` // The event timestamp (unixmilliseconds) (required)
 }
 
 type JobHistory []JobHistoryEvent
 
 type Job struct {
-	JobUUID           JobUUID       `json:"id"`
-	Topic             string        `json:"topic"`             // Topic is the topic name for which the job has been created (optional)
-	Priority          int           `json:"priority"`          // Priority is the priority of the job (optional)
-	JobProperties     JobProperties `json:"properties"`        // Properties is the job properties (required)
-	History           JobHistory    `json:"history"`           // History is the list of events of the job
-	LockResources     ResourceList  `json:"lockResources"`     // LockResources is the list of resources to lock (optional)
-	UserAgent         string        `json:"userAgent"`         // UserAgent is the user agent (or program name) that make the request (optional)
-	Requester         string        `json:"requester"`         // Requester is the identifier of the job requester (optional)
-	Name              string        `json:"name"`              // Name is the name of the job (optional)
-	SessionId         string        `json:"sessionId"`         // SessionId is the session identifier of the requester (optional)
-	TraceId           string        `json:"traceId"`           // TraceId is the trace identifier of the job (optional)
-	DebugMode         bool          `json:"debugMode"`         // DebugMode is the debug flag of the job (optional)
+	JobUUID           JobUUID       `json:"id"`                // The unique identifier of a job (required)
+	Topic             string        `json:"topic"`             // The topic name for which the job has been created (optional)
+	Priority          int           `json:"priority"`          // The priority of the job (optional)
+	JobProperties     JobProperties `json:"properties"`        // The job properties (required)
+	History           JobHistory    `json:"history"`           // The list of events of the job
+	LockResources     ResourceList  `json:"lockResources"`     // The list of resources to lock (optional)
+	UserAgent         string        `json:"userAgent"`         // The user agent (or program name) that make the request (optional)
+	Requester         string        `json:"requester"`         // The identifier of the job requester (optional)
+	Name              string        `json:"name"`              // The name of the job (optional)
+	SessionId         string        `json:"sessionId"`         // The session identifier of the requester (optional)
+	TraceId           string        `json:"traceId"`           // The trace identifier of the job (optional)
+	DebugMode         bool          `json:"debugMode"`         // The debug flag of the job (optional)
 	VisibilityTimeout uint          `json:"visibilityTimeout"` // Duration (in seconds) to keep the job hidden from the queue after it is fetched
 	StartAfter        int64         `json:"startAfter"`        // Timestamp (in milliseconds) to start the job after
 }

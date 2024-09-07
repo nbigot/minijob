@@ -8,7 +8,7 @@ import "github.com/gofiber/fiber/v2"
 // @ID resources-get-locked
 // @Produce json
 // @Tags Resources
-// @Success 200 {string}
+// @success 200 {object} web.JSONResultGetLockedResources{} "successful operation"
 // @Router /api/v1/resources/locked [get]
 func (w *WebAPIServer) GetLockedResources(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetLockedResources")
@@ -18,10 +18,10 @@ func (w *WebAPIServer) GetLockedResources(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(err)
 	}
 	return c.JSON(
-		JSONResult{
-			Code:    fiber.StatusOK,
-			Message: "success",
-			Data:    lockedResources,
+		JSONResultGetLockedResources{
+			Code:      fiber.StatusOK,
+			Message:   "success",
+			Resources: lockedResources,
 		},
 	)
 }
@@ -32,7 +32,7 @@ func (w *WebAPIServer) GetLockedResources(c *fiber.Ctx) error {
 // @ID resources-unlock-all
 // @Produce json
 // @Tags Resources
-// @Success 200 {string}
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/resources/unlock [post]
 func (w *WebAPIServer) UnlockAllResources(c *fiber.Ctx) error {
 	c.Locals("metricName", "UnlockAllResources")

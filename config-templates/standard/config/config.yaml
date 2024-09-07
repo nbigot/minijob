@@ -67,7 +67,7 @@ backend:
         maxJobs: 100000
         writeFrequency: 30
         enablePersistantStorage: true
-        directory: "./minijob/ignore/data/"
+        directory: "C:\\dev\\minijob\\ignore\\data\\"
         filename: "jobs.json"
 webserver:
     cors:
@@ -95,11 +95,7 @@ webserver:
         enable: true
         address: "127.0.0.1:8080"  # "127.0.0.1:8080" "0.0.0.0:8080"
     swagger:
-        enable: false
-        https: false
-        address: "127.0.0.1:8081"
-        certFile: ""
-        keyFile: ""
+        enable: true
 consul:
     enable: false
     server:

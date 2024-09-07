@@ -1,0 +1,527 @@
+basePath: /
+definitions:
+  github_com_nbigot_minijob_web_apierror.APIError:
+    properties:
+      code:
+        description: application-specific error code
+        type: integer
+      details:
+        description: application-level error details that best describes the error,
+          for debugging
+        type: string
+      error:
+        description: application-level error message, for debugging
+        type: string
+      jobUUID:
+        description: job uuid
+        type: string
+      validationErrors:
+        description: list of errors
+        items:
+          $ref: '#/definitions/github_com_nbigot_minijob_web_apierror.ValidationError'
+        type: array
+    type: object
+  github_com_nbigot_minijob_web_apierror.ValidationError:
+    properties:
+      failedField:
+        type: string
+      tag:
+        type: string
+      value:
+        type: string
+    type: object
+  job.Job:
+    properties:
+      debugMode:
+        description: The debug flag of the job (optional)
+        type: boolean
+      history:
+        description: The list of events of the job
+        items:
+          $ref: '#/definitions/job.JobHistoryEvent'
+        type: array
+      id:
+        description: The unique identifier of a job (required)
+        type: string
+      lockResources:
+        description: The list of resources to lock (optional)
+        items:
+          type: string
+        type: array
+      name:
+        description: The name of the job (optional)
+        type: string
+      priority:
+        description: The priority of the job (optional)
+        type: integer
+      properties:
+        allOf:
+        - $ref: '#/definitions/job.JobProperties'
+        description: The job properties (required)
+      requester:
+        description: The identifier of the job requester (optional)
+        type: string
+      sessionId:
+        description: The session identifier of the requester (optional)
+        type: string
+      startAfter:
+        description: Timestamp (in milliseconds) to start the job after
+        type: integer
+      topic:
+        description: The topic name for which the job has been created (optional)
+        type: string
+      traceId:
+        description: The trace identifier of the job (optional)
+        type: string
+      userAgent:
+        description: The user agent (or program name) that make the request (optional)
+        type: string
+      visibilityTimeout:
+        description: Duration (in seconds) to keep the job hidden from the queue after
+          it is fetched
+        type: integer
+    type: object
+  job.JobHistoryEvent:
+    properties:
+      eventType:
+        description: The event type (required)
+        type: string
+      timestamp:
+        description: The event timestamp (unixmilliseconds) (required)
+        type: integer
+    type: object
+  job.JobProperties:
+    additionalProperties: true
+    type: object
+  job.LockedResources:
+    additionalProperties:
+      type: string
+    type: object
+  web.JSONResultCloneJob:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      job:
+        allOf:
+        - $ref: '#/definitions/job.Job'
+        description: The job
+      message:
+        description: The result message
+        example: success
+        type: string
+    type: object
+  web.JSONResultCreateJob:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      job:
+        allOf:
+        - $ref: '#/definitions/job.Job'
+        description: The job
+      message:
+        description: The result message
+        example: success
+        type: string
+    type: object
+  web.JSONResultGetAllJobs:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      jobs:
+        description: The jobs
+        items:
+          $ref: '#/definitions/job.Job'
+        type: array
+      message:
+        description: The result message
+        example: success
+        type: string
+    type: object
+  web.JSONResultGetJob:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      job:
+        allOf:
+        - $ref: '#/definitions/job.Job'
+        description: The job
+      message:
+        description: The result message
+        example: success
+        type: string
+    type: object
+  web.JSONResultGetLockedResources:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      message:
+        description: The result message
+        example: success
+        type: string
+      resources:
+        allOf:
+        - $ref: '#/definitions/job.LockedResources'
+        description: The locked resources
+    type: object
+  web.JSONResultPullJob:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      jobs:
+        description: The jobs
+        items:
+          $ref: '#/definitions/job.Job'
+        type: array
+      message:
+        description: The result message
+        example: success
+        type: string
+    type: object
+  web.JSONResultSuccess:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      message:
+        description: The result message
+        example: success
+        type: string
+    type: object
+host: 127.0.0.1:8080
+info:
+  contact: {}
+  description: This documentation describes MiniJob API
+  license:
+    name: MIT
+    url: https://github.com/nbigot/minijob/blob/main/LICENSE
+  title: MiniJob API
+  version: "1.0"
+paths:
+  /:
+    get:
+      description: Home page
+      operationId: utils-home
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: Welcome to MiniJob!
+          schema:
+            type: string
+      summary: Home page
+      tags:
+      - Utils
+  /api/v1/admin/server/restart:
+    post:
+      consumes:
+      - application/json
+      description: Restart server
+      operationId: server-restart
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Restart server
+      tags:
+      - Admin
+  /api/v1/admin/server/shutdown:
+    post:
+      consumes:
+      - application/json
+      description: Shutdown server
+      operationId: server-shutdown
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Shutdown server
+      tags:
+      - Admin
+  /api/v1/job/:
+    post:
+      description: Create job
+      operationId: job-create
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultCreateJob'
+      summary: Create job
+      tags:
+      - Jobs
+  /api/v1/job/{jobuuid}:
+    delete:
+      description: Delete job
+      operationId: job-delete
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Delete job
+      tags:
+      - Jobs
+    get:
+      description: Get a job
+      operationId: job-get
+      parameters:
+      - description: Job UUID
+        in: path
+        name: jobuuid
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetJob'
+        "400":
+          description: Invalid UUID
+          schema:
+            $ref: '#/definitions/github_com_nbigot_minijob_web_apierror.APIError'
+        "404":
+          description: Job not found
+          schema:
+            $ref: '#/definitions/github_com_nbigot_minijob_web_apierror.APIError'
+        "500":
+          description: Invalid job
+          schema:
+            $ref: '#/definitions/github_com_nbigot_minijob_web_apierror.APIError'
+      summary: Get a job
+      tags:
+      - Jobs
+  /api/v1/job/{jobuuid}/cancel:
+    post:
+      description: Cancel a job
+      operationId: job-cancel
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Cancel a job
+      tags:
+      - Jobs
+  /api/v1/job/{jobuuid}/clone:
+    post:
+      description: Clone job
+      operationId: job-clone
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultCloneJob'
+      summary: Clone job
+      tags:
+      - Jobs
+  /api/v1/job/{jobuuid}/fail:
+    post:
+      description: Set job as failed
+      operationId: job-set-as-failed
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Set job as failed
+      tags:
+      - Jobs
+  /api/v1/job/{jobuuid}/succeed:
+    post:
+      description: Set job as successful
+      operationId: job-set-as-successful
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Set job as successful
+      tags:
+      - Jobs
+  /api/v1/job/{jobuuid}/visibilitytimeout:
+    post:
+      description: Change job visibility timeout
+      operationId: job-change-visibility-timeout
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Change job visibility timeout
+      tags:
+      - Jobs
+  /api/v1/job/pull:
+    post:
+      description: Pull one or multiple jobs
+      operationId: job-pull
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultPullJob'
+      summary: Pull one or multiple jobs
+      tags:
+      - Jobs
+  /api/v1/jobs/:
+    delete:
+      description: Delete all jobs
+      operationId: jobs-delete-all
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Delete all jobs
+      tags:
+      - Jobs
+    get:
+      description: Get all jobs
+      operationId: jobs-get-all
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetAllJobs'
+      summary: Get all jobs
+      tags:
+      - Jobs
+  /api/v1/jobs/monitor:
+    get:
+      description: Monitor jobs
+      operationId: job-monitor
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Monitor jobs
+      tags:
+      - Jobs
+  /api/v1/resources/locked:
+    get:
+      description: Get locked Resources
+      operationId: resources-get-locked
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetLockedResources'
+      summary: Get locked Resources
+      tags:
+      - Resources
+  /api/v1/resources/unlock:
+    post:
+      description: Unlock all resources
+      operationId: resources-unlock-all
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Unlock all resources
+      tags:
+      - Resources
+  /computemetrics:
+    post:
+      description: Compute server metrics
+      operationId: utils-metrics-compute
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: ok
+          schema:
+            type: string
+      summary: Compute server metrics
+      tags:
+      - Utils
+  /healthcheck:
+    get:
+      description: Healthcheck server
+      operationId: utils-healthcheck
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: ok
+          schema:
+            type: string
+      summary: Healthcheck server
+      tags:
+      - Utils
+  /metrics:
+    get:
+      description: get server metrics
+      operationId: utils-metrics-get
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: ok
+          schema:
+            type: string
+      summary: get server metrics
+      tags:
+      - Utils
+  /ping:
+    get:
+      description: Ping server
+      operationId: utils-ping
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: ok
+          schema:
+            type: string
+      summary: Ping server
+      tags:
+      - Utils
+swagger: "2.0"

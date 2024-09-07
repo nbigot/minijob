@@ -12,6 +12,7 @@ import (
 
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
+	_ "github.com/nbigot/minijob/docs"
 	"github.com/nbigot/minijob/metrics"
 	"github.com/nbigot/minijob/service"
 )
@@ -88,13 +89,15 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	}
 
 	if w.appConfig.WebServer.Swagger.Enable {
+		// example of url to swagger gui: "http://127.0.0.1:8080/docs/index.html"
+		// url to swagger json document: "http://127.0.0.1:8080/docs/doc.json"
 		// Create swagger routes group.
 		apiSwagger := app.Group("/docs")
 
 		// Routes for GET method:
 		apiSwagger.Get("*", swagger.HandlerDefault)
 		apiSwagger.Get("*", swagger.New(swagger.Config{
-			URL:         "/swagger/doc.json",
+			URL:         "swagger.json",
 			DeepLinking: false,
 		}))
 	}
