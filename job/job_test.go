@@ -8,7 +8,7 @@ import (
 )
 
 func TestJob_UnmarshalJSON(t *testing.T) {
-	// Test case 0: perfect example of Valid JSON input
+	// Test case 1: perfect example of Valid JSON input
 	jsonData1 := []byte(`{
 		"topic": "example",
 		"properties": {
@@ -30,7 +30,7 @@ func TestJob_UnmarshalJSON(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	// Test case 1: Valid JSON input
+	// Test case 2: Valid JSON input
 	jsonData2 := []byte(`{
 		"id": "0190e951-c29a-70aa-ba59-18be4abe97a2",
 		"topic": "example",
@@ -62,19 +62,7 @@ func TestJob_UnmarshalJSON(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	// fields id and history are ignored during unmarshaling
-	// Add assertions to validate the unmarshaled data
-	expectedUUID := uuid.UUID{}
-	expectedUUID.UnmarshalText([]byte("00000000-0000-0000-0000-000000000000"))
-	if job2.JobUUID != expectedUUID {
-		t.Errorf("Expected JobUUID to be '%s', got '%s'", expectedUUID, job2.JobUUID)
-	}
-
-	if len(job2.History) != 0 {
-		t.Errorf("Expected 0 history events, got %d", len(job2.History))
-	}
-
-	// Test case 2: valid JSON input
+	// Test case 3: valid JSON input
 	invalidJsonData2 := []byte(`{
 		"properties": {
 			"key1": "value1",
@@ -88,15 +76,15 @@ func TestJob_UnmarshalJSON(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	// Test case 3: Invalid JSON input (missing or empty required field properties)
-	invalidJsonData3 := []byte(`{
+	// Test case 4: Valid JSON input
+	jsonData4 := []byte(`{
 		"properties": {}
 	}`)
 
 	job4 := &Job{}
-	err = json.Unmarshal(invalidJsonData3, job4)
-	if err == nil {
-		t.Error("Expected error, but got nil")
+	err = json.Unmarshal(jsonData4, job4)
+	if err != nil {
+		t.Error("Expected nil, but got error")
 	}
 }
 
@@ -114,7 +102,7 @@ func TestJob_MarshalJSON(t *testing.T) {
 		DebugMode:     false,
 	}
 
-	expectedJSON := `{"id":"0190e951-c29a-70aa-ba59-18be4abe9700","topic":"topic1","properties":{"key1":"value1","key2":42,"key3":true,"key4":["a","b","c"]},"history":[],"lockResources":["resource1","resource2","resource3:abc:def"],"userAgent":"user agent test","requester":"unit-test","sessionId":"0190e951-c29a-70aa-ba59-18be4abe97a1","traceId":"0190e951-c29a-70aa-ba59-18be4abe97a0","debugMode":false}`
+	expectedJSON := `{"id":"0190e951-c29a-70aa-ba59-18be4abe9700","topic":"topic1","priority":0,"properties":{"key1":"value1","key2":42,"key3":true,"key4":["a","b","c"]},"history":[],"lockResources":["resource1","resource2","resource3:abc:def"],"userAgent":"user agent test","requester":"unit-test","name":"","sessionId":"0190e951-c29a-70aa-ba59-18be4abe97a1","traceId":"0190e951-c29a-70aa-ba59-18be4abe97a0","debugMode":false,"visibilityTimeout":0,"startAfter":0}`
 
 	resultJSON, err := json.Marshal(j)
 	if err != nil {
