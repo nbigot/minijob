@@ -17,6 +17,8 @@ const (
 	ServiceEventJobStarted
 	// ServiceEventJobSucceeded is an event that is sent when a job is succeeded
 	ServiceEventJobSucceeded
+	// ServiceEventJobCanceled is an event that is sent when a job is canceled
+	ServiceEventJobCanceled
 	// ServiceEventJobDeleted is an event that is sent when a job is deleted
 	ServiceEventJobDeleted
 	// ServiceEventJobTimeout is an event that is sent when a job is timeout
