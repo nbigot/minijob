@@ -89,8 +89,16 @@ func RunServer(appConfig *config.Config) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	go svc.Run()
-	defer svc.Finalize()
+	go func() {
+		if err := svc.Run(); err != nil {
+			log.Logger.Error("Error running service", zap.Error(err))
+		}
+	}()
+	defer func() {
+		if err := svc.Finalize(); err != nil {
+			log.Logger.Error("Error finalizing API server", zap.Error(err))
+		}
+	}()
 
 	// create api server (HTTP server)
 	apiServer = webserver.NewServer(log.Logger, web.GetFiberConfig(), appConfig, svc)

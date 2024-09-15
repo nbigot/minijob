@@ -65,7 +65,7 @@ func (s *Server) Initialize(ctx context.Context, options ...ServerOption) error 
 	}
 	s.ctx = ctx
 	signal.Notify(s.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	s.webAPIServer = web.NewWebAPIServer(s.appConfig, s.fiberConfig, s.service, func() { s.Shutdown() }, func() { s.RequestRestartServer() })
+	s.webAPIServer = web.NewWebAPIServer(s.appConfig, s.fiberConfig, s.service, func() { _ = s.Shutdown() }, func() { s.RequestRestartServer() })
 	if err := s.webAPIServer.Init(); err != nil {
 		return err
 	}

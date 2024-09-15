@@ -1148,7 +1148,9 @@ func (svc *Service) Run() error {
 	jobRetentionTicker := time.NewTicker(time.Duration(max(svc.conf.Jobs.RetentionPolicy.Interval, 60)) * time.Second)
 
 	// Run the job backend provider in a separate goroutine
-	go svc.bp.Run()
+	go func() {
+		_ = svc.bp.Run()
+	}()
 
 	for {
 		select {
@@ -1166,7 +1168,7 @@ func (svc *Service) Run() error {
 			watchdogTicker.Stop()
 			jobRetentionTicker.Stop()
 			// stop and wait for the job backend provider to end (synchronous)
-			svc.bp.Stop()
+			_ = svc.bp.Stop()
 			// stop the service itself
 			// must be ok (synchronous)
 			// svc.wg.Wait()

@@ -104,7 +104,7 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 }
 
 func (w *WebAPIServer) ShutdownServer() {
-	w.service.Stop()
+	_ = w.service.Stop()
 	w.metrics.Shutdown()
 	w.funcShutdownServer()
 }
