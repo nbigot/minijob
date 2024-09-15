@@ -1188,7 +1188,7 @@ func (svc *Service) Run() error {
 				watchdogTicker.Stop()
 				jobRetentionTicker.Stop()
 				// stop and wait for the job backend provider to end (synchronous)
-				svc.bp.Stop()
+				_ = svc.bp.Stop()
 				// stop the main goroutine (the service is stopped)
 				return errors.New("job backend provider received a fatal error")
 			default:
