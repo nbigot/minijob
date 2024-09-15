@@ -65,7 +65,9 @@ func (svc *Service) Run() error {
 	fmt.Println("Service started")
 
 	// Run the job backend provider in a separate goroutine
-	go svc.bp.Run()
+	go func() {
+		_ = svc.bp.Run()
+	}()
 
 	for {
 		select {
@@ -73,7 +75,7 @@ func (svc *Service) Run() error {
 			// Channel was closed, time to stop
 			// received a signal to stop the service
 			// stop and wait for the job backend provider to end (synchronous)
-			svc.bp.Stop()
+			_ = svc.bp.Stop()
 			// stop the service itself
 			// must be ok (synchronous)
 			// svc.wg.Wait()
@@ -85,7 +87,7 @@ func (svc *Service) Run() error {
 			case jobbackendprovider.EventFatalError:
 				fmt.Println("Fatal error received from job backend provider")
 				// stop and wait for the job backend provider to end (synchronous)
-				svc.bp.Stop()
+				_ = svc.bp.Stop()
 				// stop the main goroutine (the service is stopped)
 				return errors.New("job backend provider received a fatal error")
 			default:
@@ -136,9 +138,11 @@ func main() {
 		fmt.Println("Error while creating and initializing service")
 		return
 	}
-	go svc.Run()
+	go func() {
+		_ = svc.Run()
+	}()
 	time.Sleep(5 * time.Second)
 	fmt.Println("Stopping service...")
-	svc.Stop()
+	_ = svc.Stop()
 	fmt.Println("Done.")
 }

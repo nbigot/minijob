@@ -125,6 +125,14 @@ func (p *InMemoryJobBackendProvider) OnJobEnqueued(j *job.Job) error {
 	return nil
 }
 
+func (p *InMemoryJobBackendProvider) OnJobCanceled(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobCanceled, JobUUID: j.JobUUID})
+	return nil
+}
+
 func (p *InMemoryJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

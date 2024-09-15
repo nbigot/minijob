@@ -167,8 +167,15 @@ func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
 		zap.String("topic", "service"),
 		zap.String("method", "FinalizeJobCreation"),
 		zap.String("JobUUID", j.JobUUID.String()),
-		zap.Any("Job", j),
 	)
+
+	// log the job value
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"New job",
+			zap.Any("Job", j),
+		)
+	}
 
 	if err = svc.bp.OnJobCreated(j); err != nil {
 		return nil, err
@@ -646,7 +653,7 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
-			Code:     constants.ErrorCantCloneJob,
+			Code:     constants.ErrorCantSetJobAsSuccessful,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
 			Err:      err,
@@ -718,7 +725,101 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 }
 
 func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
-	return nil // TODO
+	// cancel a job that is running and put it back in the queue
+	var err error
+
+	// get the job
+	j, err := svc.GetJob(jobUUID)
+	if j == nil {
+		apiErr := apierror.APIError{
+			Message:  "job not found",
+			Code:     constants.ErrorCantCancelJob,
+			HttpCode: fiber.StatusBadRequest,
+			JobUUID:  jobUUID,
+			Err:      err,
+		}
+		svc.logger.Error(
+			"Cannot cancel job",
+			zap.String("topic", "service"),
+			zap.String("method", "CancelJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
+
+		return &apiErr
+	}
+
+	// check if the job is running
+	state, _ := j.GetState()
+	if state != job.JobRunning {
+		apiErr := apierror.APIError{
+			Message:  "job is not running",
+			Code:     constants.ErrorCantCancelJob,
+			HttpCode: fiber.StatusBadRequest,
+			JobUUID:  jobUUID,
+			Err:      err,
+		}
+		svc.logger.Error(
+			"Cannot cancel job",
+			zap.String("topic", "service"),
+			zap.String("method", "CancelJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
+
+		return &apiErr
+	}
+
+	// cancel the job (add a history event)
+	j.AddHistoryEvent(job.JobEventCancel, time.Now().UnixMilli())
+
+	// notify the backend provider
+	if err = svc.bp.OnJobCanceled(j); err != nil {
+		return err
+	}
+
+	// update metrics
+	svc.metrics.JobsCounterRunning--
+	svc.metrics.JobsCounterCanceled++
+	svc.notifChanSvc <- ServiceEvent{
+		Type:    ServiceEventJobCanceled,
+		Metrics: svc.metrics,
+		JobUUID: j.JobUUID,
+	}
+
+	svc.logger.Info(
+		"Job canceled",
+		zap.String("topic", "service"),
+		zap.String("method", "CancelJob"),
+		zap.String("JobUUID", jobUUID.String()),
+	)
+
+	// Enqueue the job by adding a history event
+	j.AddHistoryEvent(job.JobEventEnqueue, time.Now().UnixMilli())
+
+	// Notify the backend provider
+	if err = svc.bp.OnJobEnqueued(j); err != nil {
+		return err
+	}
+
+	// Update metrics
+	svc.metrics.JobsCounterQueued++
+	svc.notifChanSvc <- ServiceEvent{
+		Type:    ServiceEventJobEnqueued,
+		Metrics: svc.metrics,
+		JobUUID: j.JobUUID,
+	}
+
+	svc.logger.Info(
+		"Job enqueued",
+		zap.String("topic", "service"),
+		zap.String("method", "CancelJob"),
+		zap.String("JobUUID", j.JobUUID.String()),
+	)
+
+	svc.TryEnqueuePendingJobs()
+
+	return nil
 }
 
 func (svc *Service) FailJob(jobUUID job.JobUUID) error {
@@ -1047,7 +1148,9 @@ func (svc *Service) Run() error {
 	jobRetentionTicker := time.NewTicker(time.Duration(max(svc.conf.Jobs.RetentionPolicy.Interval, 60)) * time.Second)
 
 	// Run the job backend provider in a separate goroutine
-	go svc.bp.Run()
+	go func() {
+		_ = svc.bp.Run()
+	}()
 
 	for {
 		select {
@@ -1065,7 +1168,7 @@ func (svc *Service) Run() error {
 			watchdogTicker.Stop()
 			jobRetentionTicker.Stop()
 			// stop and wait for the job backend provider to end (synchronous)
-			svc.bp.Stop()
+			_ = svc.bp.Stop()
 			// stop the service itself
 			// must be ok (synchronous)
 			// svc.wg.Wait()
@@ -1085,7 +1188,7 @@ func (svc *Service) Run() error {
 				watchdogTicker.Stop()
 				jobRetentionTicker.Stop()
 				// stop and wait for the job backend provider to end (synchronous)
-				svc.bp.Stop()
+				_ = svc.bp.Stop()
 				// stop the main goroutine (the service is stopped)
 				return errors.New("job backend provider received a fatal error")
 			default:

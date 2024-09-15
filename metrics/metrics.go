@@ -75,25 +75,22 @@ func (m *Metrics) Shutdown() {
 
 func (m *Metrics) Run() {
 	m.wg.Add(1)
-	for {
-		select {
-		case e := <-m.notifChan:
-			switch e.Type {
-			// case "job": // TODO
-			// 	// m.JobsTotal.WithLabelValues(e.Value, "GET", "/").Inc()
-			// case "duration": // TODO
-			// 	// m.JobDurationSeconds.WithLabelValues("default").Observe(e.Value)
-			// case "inprogress": // TODO
-			// 	// m.JobsInProgress.WithLabelValues("GET").Inc()
-			// case "completed": // TODO
-			// 	// m.JobsInProgress.WithLabelValues("GET").Dec()
-			// case "error": // TODO
-			// 	// m.JobsTotal.WithLabelValues("500", "GET", "/").Inc()
-			case service.ServiceEventShutdown:
-				m.wg.Done()
-				return // exit the goroutine
-			default:
-			}
+	for e := range m.notifChan {
+		switch e.Type {
+		// case "job": // TODO
+		// 	// m.JobsTotal.WithLabelValues(e.Value, "GET", "/").Inc()
+		// case "duration": // TODO
+		// 	// m.JobDurationSeconds.WithLabelValues("default").Observe(e.Value)
+		// case "inprogress": // TODO
+		// 	// m.JobsInProgress.WithLabelValues("GET").Inc()
+		// case "completed": // TODO
+		// 	// m.JobsInProgress.WithLabelValues("GET").Dec()
+		// case "error": // TODO
+		// 	// m.JobsTotal.WithLabelValues("500", "GET", "/").Inc()
+		case service.ServiceEventShutdown:
+			m.wg.Done()
+			return // exit the goroutine
+		default:
 		}
 	}
 }

@@ -388,8 +388,8 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 }
 
 // CancelJob godoc
-// @Summary Cancel a job
-// @Description Cancel a job
+// @Summary Cancel a running job
+// @Description Cancel a job that is running
 // @ID job-cancel
 // @Produce json
 // @Tags Jobs

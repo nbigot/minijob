@@ -193,6 +193,10 @@ func (p *RedisJobBackendProvider) LoadJobs() (job.JobMap, error) {
 // 	return nil
 // }
 
+func (p *RedisJobBackendProvider) OnJobCanceled(j *job.Job) error {
+	return p.SaveJob(j)
+}
+
 func (p *RedisJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
