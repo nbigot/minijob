@@ -280,7 +280,6 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 	}
 
 	// Update metrics
-	svc.metrics.JobsCounterPending--
 	svc.metrics.JobsCounterQueued++
 	svc.notifChanSvc <- ServiceEvent{
 		Type:    ServiceEventJobEnqueued,
@@ -599,7 +598,6 @@ func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 	}
 
 	// update metrics
-	svc.metrics.JobsCounterQueued--
 	svc.metrics.JobsCounterRunning++
 	svc.notifChanSvc <- ServiceEvent{
 		Type:    ServiceEventJobStarted,
@@ -704,7 +702,6 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 	}
 
 	// update metrics
-	svc.metrics.JobsCounterRunning--
 	svc.metrics.JobsCounterSucceeded++
 	svc.notifChanSvc <- ServiceEvent{
 		Type:    ServiceEventJobSucceeded,
@@ -779,7 +776,6 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	}
 
 	// update metrics
-	svc.metrics.JobsCounterRunning--
 	svc.metrics.JobsCounterCanceled++
 	svc.notifChanSvc <- ServiceEvent{
 		Type:    ServiceEventJobCanceled,
