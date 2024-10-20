@@ -1,6 +1,9 @@
 package web
 
-import "github.com/nbigot/minijob/job"
+import (
+	"github.com/nbigot/minijob/job"
+	"github.com/nbigot/minijob/service"
+)
 
 type JSONResultSuccess struct {
 	Code    int    `json:"code" example:"200"`        // The result code
@@ -47,6 +50,18 @@ type JSONResultGetLockedResources struct {
 	Code      int                 `json:"code" example:"200"`        // The result code
 	Message   string              `json:"message" example:"success"` // The result message
 	Resources job.LockedResources `json:"resources"`                 // The locked resources
+}
+
+type JSONResultGetJobsMetrics struct {
+	Code    int                     `json:"code" example:"200"`        // The result code
+	Message string                  `json:"message" example:"success"` // The result message
+	Metrics *service.ServiceMetrics `json:"metrics"`                   // The metrics
+}
+
+type JSONResultGetJobsTopics struct {
+	Code    int      `json:"code" example:"200"`        // The result code
+	Message string   `json:"message" example:"success"` // The result message
+	Topics  []string `json:"topics"`                    // The job topics
 }
 
 type HTTPError struct {

@@ -133,6 +133,22 @@ func (p *InMemoryJobBackendProvider) OnJobCanceled(j *job.Job) error {
 	return nil
 }
 
+func (p *InMemoryJobBackendProvider) OnJobFailed(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobFailed, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *InMemoryJobBackendProvider) OnJobTerminated(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobTerminated, JobUUID: j.JobUUID})
+	return nil
+}
+
 func (p *InMemoryJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -236,13 +252,20 @@ func (p *InMemoryJobBackendProvider) Run() error {
 }
 
 func (p *InMemoryJobBackendProvider) sync() error {
-	if p.hasChanged {
+	// Check if there are changes to be synchronized
+	if !p.hasChanged {
+		return nil
+	}
+
+	// If persistent storage is enabled, save changes to file
+	if p.enablePersistantStorage {
 		if err := p.SaveToFile(); err != nil {
 			return err
 		}
-		p.hasChanged = false
 	}
 
+	// Reset the change flag after synchronization
+	p.hasChanged = false
 	return nil
 }
 

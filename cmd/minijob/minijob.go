@@ -59,7 +59,9 @@ func WithCors() webserver.ServerOption {
 
 func WithPrometheus() webserver.ServerOption {
 	return func(s *webserver.Server) {
-		s.GetWebAPIServer().AddPrometheus(s.GetApp(), s.GetService().GetServiceEventChan())
+		if s.GetWebConfig().Metrics.Enable {
+			s.GetWebAPIServer().AddPrometheus(s.GetApp(), s.GetService().GetServiceEventChan())
+		}
 	}
 }
 

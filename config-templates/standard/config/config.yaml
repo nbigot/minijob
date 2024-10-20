@@ -1,23 +1,26 @@
 # Configuration file for minijob server
-auditlog:
-    enable: false
-    enableLogAccessGranted: false
 jobs:
     # bulkFlushFrequency: 2
     # bulkMaxSize: 100
     # channelBufferSize: 2000
     # maxAllowedIteratorsPerStream: 1000
     # maxMessagePerGetOperation: 10000
-    logVerbosity: 0
+    logVerbosity: 1
     maxAllowedJobs: 0 # Maximum number of jobs allowed to be created (0 means no limit)
     jsonSchema:
         enable: true  # Enable JSON schema validation for job data
-        path: "./minijob/config-templates/standard/config/schema.json" # Path to JSON schema file
+        path: "C:\\dev\\minijob\\config-templates\\standard\\config\\schema.json" # Path to JSON schema file
     retentionPolicy:
         enable: true
         interval: 60
         maxJobs: 1000
         maxJobAge: 3600
+    retryPolicy:
+        maxRetry: 3
+        backoffStrategy:
+            base: 2
+            factor: 2
+            maxDuration: 60
     defaultVisibilityTimeout: 60  # Default visibility timeout in seconds (1 minute)
     maxVisibilityTimeout: 86400 # Maximum visibility timeout in seconds (24 hours)
 watchdog:
@@ -79,18 +82,7 @@ webserver:
     monitor:
         enable: false
     metrics:
-        enable: false
-    rateLimiter:
-        enable: false
-        routeStream:
-            maxRequests: 100000
-            durationInSeconds: 1
-        routeJob:
-            maxRequests: 20
-            durationInSeconds: 60
-        routeAccount:
-            maxRequests: 10
-            durationInSeconds: 60
+        enable: true
     http:
         enable: true
         address: "127.0.0.1:8080"  # "127.0.0.1:8080" "0.0.0.0:8080"

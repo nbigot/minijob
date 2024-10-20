@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/nbigot/minijob/log"
+	"github.com/nbigot/minijob/retrypolicy"
 
 	"os"
 
@@ -85,8 +86,7 @@ type Config struct {
 			Filename                string `yaml:"filename"`
 		} `yaml:"inMemory"`
 	}
-	LoggerConfig zap.Config `yaml:"logger"`
-	Jobs         struct {
+	Jobs struct {
 		// BulkFlushFrequency        int  `yaml:"bulkFlushFrequency"`
 		// BulkMaxSize               int  `yaml:"bulkMaxSize"`
 		// ChannelBufferSize         int  `yaml:"channelBufferSize"`
@@ -106,14 +106,12 @@ type Config struct {
 			MaxJobAge int  `yaml:"maxJobAge"` // The duration to keep the job in the backend after it has been completed
 			MaxJobs   int  `yaml:"maxJobs"`   // The maximum number of jobs to keep in the backend after it has been completed
 		} `yaml:"retentionPolicy"`
+		RetryPolicy retrypolicy.RetryPolicy `yaml:"retryPolicy"`
 	} `yaml:"jobs"`
-	AuditLog struct {
-		Enable                 bool `yaml:"enable"`
-		EnableLogAccessGranted bool `yaml:"enableLogAccessGranted"`
-	}
-	WebServer WebServerConfig `yaml:"webserver"`
-	Watchdog  WatchdogConfig  `yaml:"watchdog"`
-	Consul    ConsulConfig    `yaml:"consul"`
+	LoggerConfig zap.Config      `yaml:"logger"`
+	WebServer    WebServerConfig `yaml:"webserver"`
+	Watchdog     WatchdogConfig  `yaml:"watchdog"`
+	Consul       ConsulConfig    `yaml:"consul"`
 }
 
 func LoadConfig(filename string) (*Config, error) {

@@ -206,6 +206,7 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 			Message:  "cannot create job",
 			Code:     constants.ErrorCantCreateJob,
 			HttpCode: fiber.StatusBadRequest,
+			Details:  err.Error(),
 			Err:      err,
 		}
 		return apiErr.HTTPResponse(c)
@@ -554,7 +555,7 @@ func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 	)
 }
 
-// JobsMonitor godoc
+// GetJobsMonitoring godoc
 // @Summary Monitor jobs
 // @Description Monitor jobs
 // @ID job-monitor
@@ -562,8 +563,8 @@ func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 // @Tags Jobs
 // @success 200 {object} web.JSONResultSuccess{} "successful operation"
 // @Router /api/v1/jobs/monitor [get]
-func (w *WebAPIServer) JobsMonitor(c *fiber.Ctx) error {
-	c.Locals("metricName", "JobsMonitor")
+func (w *WebAPIServer) GetJobsMonitoring(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetJobsMonitoring")
 
 	// display all jobs in an html table
 	// the table should have the following columns:
@@ -586,6 +587,45 @@ func (w *WebAPIServer) JobsMonitor(c *fiber.Ctx) error {
 		JSONResultSuccess{
 			Code:    fiber.StatusOK,
 			Message: "success",
+		},
+	)
+}
+
+// GetJobsMetrics godoc
+// @Summary Get jobs metrics
+// @Description Get jobs metrics
+// @ID jobs-metrics
+// @Produce json
+// @Tags Jobs
+// @success 200 {object} web.JSONResultGetJobsMetrics{} "successful operation"
+// @Router /api/v1/jobs/metrics [get]
+func (w *WebAPIServer) GetJobsMetrics(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetJobsMetrics")
+	result := JSONResultGetJobsMetrics{
+		Code:    fiber.StatusOK,
+		Message: "success",
+		Metrics: w.service.GetMetrics(),
+	}
+
+	// return the metrics as json
+	return c.JSON(result)
+}
+
+// GetJobsTopics godoc
+// @Summary Get jobs topics
+// @Description Get jobs topics
+// @ID jobs-topics
+// @Produce json
+// @Tags Jobs
+// @success 200 {object} web.JSONResultGetJobsTopics{} "successful operation"
+// @Router /api/v1/jobs/topics [get]
+func (w *WebAPIServer) GetJobsTopics(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetJobsTopics")
+	return c.JSON(
+		JSONResultGetJobsTopics{
+			Code:    fiber.StatusOK,
+			Message: "success",
+			Topics:  w.service.GetJobsTopics(),
 		},
 	)
 }

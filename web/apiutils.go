@@ -68,24 +68,6 @@ func (w *WebAPIServer) Metrics(c *fiber.Ctx) error {
 	return nil
 }
 
-// ComputeMetrics godoc
-// @Summary Compute server metrics
-// @Description Compute server metrics
-// @ID utils-metrics-compute
-// @Produce plain
-// @Tags Utils
-// @Success 200 {string} string "ok"
-// @Router /computemetrics [post]
-func (w *WebAPIServer) ComputeMetrics(c *fiber.Ctx) error {
-	c.Locals("metricName", "ComputeMetrics")
-
-	if err := w.service.ComputeMetrics(); err == nil {
-		return c.SendString("ok")
-	}
-
-	return c.SendStatus(fiber.StatusServiceUnavailable)
-}
-
 func (w *WebAPIServer) GetJobUUIDFromParameter(c *fiber.Ctx) (job.JobUUID, *apierror.APIError) {
 	jobUuid, err := uuid.Parse(c.Params(constants.JobUuidParam))
 	if err != nil {

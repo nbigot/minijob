@@ -15,6 +15,7 @@ import (
 	"github.com/nbigot/minijob/jobbackendprovider"
 	"github.com/nbigot/minijob/jobbackendprovider/registry"
 	"github.com/nbigot/minijob/log"
+	"github.com/nbigot/minijob/pq"
 
 	"github.com/nbigot/minijob/web/apierror"
 
@@ -23,20 +24,21 @@ import (
 
 type Service struct {
 	// implements IService interface
-	jobs            job.JobMap                             // hashmap of jobs
-	pendingJobs     job.JobMap                             // hashmap of pending jobs
-	lockedResources job.LockedResources                    // map of locked resources
-	mu              sync.Mutex                             // to ensure safe concurrent manipulation of jobs
-	mapMutex        sync.RWMutex                           // mutex to protect hashmap of jobs
-	notifChanBP     chan jobbackendprovider.Event          // notification channel for job backend provider
-	notifChanSvc    chan ServiceEvent                      // notification channel for metrics
-	metrics         ServiceMetrics                         // metrics
-	wg              sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
-	stopChan        chan struct{}                          // stopChan is a channel to stop the Run function
-	running         atomic.Bool                            // Add this to track if the service is running
-	bp              jobbackendprovider.IJobBackendProvider // backend provider
-	conf            *config.Config                         // configuration
-	logger          *zap.Logger                            // logger
+	jobs             job.JobMap                             // hashmap of jobs
+	pendingJobs      job.JobMap                             // hashmap of pending jobs
+	pqRetryJobs      pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
+	lockedResources  job.LockedResources                    // map of locked resources
+	mu               sync.Mutex                             // to ensure safe concurrent manipulation of jobs
+	mapMutex         sync.RWMutex                           // mutex to protect hashmap of jobs
+	notifChanBP      chan jobbackendprovider.Event          // notification channel for job backend provider
+	notifChanMetrics chan ServiceEvent                      // notification channel for metrics
+	metrics          ServiceMetrics                         // metrics
+	wg               sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
+	stopChan         chan struct{}                          // stopChan is a channel to stop the Run function
+	running          atomic.Bool                            // Add this to track if the service is running
+	bp               jobbackendprovider.IJobBackendProvider // backend provider
+	conf             *config.Config                         // configuration
+	logger           *zap.Logger                            // logger
 }
 
 func (svc *Service) Init() error {
@@ -77,32 +79,38 @@ func (svc *Service) LoadJobs() error {
 
 	// compute metrics
 	svc.lockedResources = svc.ComputeLockedResources(svc.jobs)
-	svc.metrics.ResourcesLockedCount = uint(len(svc.lockedResources))
 
-	svc.metrics.JobsCount = uint(len(svc.jobs))
 	svc.pendingJobs = make(job.JobMap)
 	var jobState job.JobState
 	for _, j := range svc.jobs {
 		if jobState, err = j.GetState(); err != nil {
 			return err
 		}
-		svc.metrics.JobsCounterCreated++
+		var jobMetrics *JobMetrics
+		var found bool
+		if jobMetrics, found = svc.metrics.JobMetricsByTopicMap[j.Topic]; !found {
+			jobMetrics = &JobMetrics{}
+			svc.metrics.JobMetricsByTopicMap[j.Topic] = jobMetrics
+		}
+		jobMetrics.JobsCounter++
+		jobMetrics.JobsCounterCreated++
 		switch jobState {
 		case job.JobPending:
-			svc.metrics.JobsCounterPending++
+			jobMetrics.JobsCounterPending++
 			svc.pendingJobs[j.JobUUID] = j
 		case job.JobQueued:
-			svc.metrics.JobsCounterQueued++
+			jobMetrics.JobsCounterQueued++
 		case job.JobRunning:
-			svc.metrics.JobsCounterRunning++
+			jobMetrics.JobsCounterRunning++
 		case job.JobSucceeded:
-			svc.metrics.JobsCounterSucceeded++
+			jobMetrics.JobsCounterSucceeded++
 		case job.JobFailed:
-			svc.metrics.JobsCounterFailed++
+			jobMetrics.JobsCounterFailed++
 		case job.JobCanceled:
-			svc.metrics.JobsCounterCanceled++
+			jobMetrics.JobsCounterCanceled++
 		}
-		svc.metrics.JobsCounterFaillure += j.GetCountFaillures()
+		jobMetrics.JobsCounterFaillure += j.GetCountFaillures()
+		jobMetrics.ResourcesLockedCount += j.GetCountLockResources()
 	}
 
 	return nil
@@ -162,15 +170,17 @@ func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
 	svc.pendingJobs[j.JobUUID] = j
 	svc.setJobMap(j.JobUUID, j)
 
-	svc.logger.Info(
-		"Job created",
-		zap.String("topic", "service"),
-		zap.String("method", "FinalizeJobCreation"),
-		zap.String("JobUUID", j.JobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job created",
+			zap.String("topic", "service"),
+			zap.String("method", "FinalizeJobCreation"),
+			zap.String("JobUUID", j.JobUUID.String()),
+		)
+	}
 
 	// log the job value
-	if svc.conf.Jobs.LogVerbosity > 1 {
+	if svc.conf.Jobs.LogVerbosity > 2 {
 		svc.logger.Info(
 			"New job",
 			zap.Any("Job", j),
@@ -182,13 +192,22 @@ func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
 	}
 
 	// send a notification to the channel that a new job has been created
-	svc.metrics.JobsCount++
-	svc.metrics.JobsCounterCreated++
-	svc.metrics.JobsCounterPending++
-	svc.notifChanSvc <- ServiceEvent{
-		Type:    ServiceEventJobCreated,
-		Metrics: svc.metrics,
-		JobUUID: j.JobUUID,
+	if svc.conf.WebServer.Metrics.Enable {
+		var jobMetrics *JobMetrics
+		var found bool
+		if jobMetrics, found = svc.metrics.JobMetricsByTopicMap[j.Topic]; !found {
+			jobMetrics = &JobMetrics{}
+			svc.metrics.JobMetricsByTopicMap[j.Topic] = jobMetrics
+		}
+		jobMetrics.JobsCounter++
+		jobMetrics.JobsCounterCreated++
+		jobMetrics.JobsCounterPending++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobCreated,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
+		}
 	}
 
 	// try to enqueue the job, it does not matter if this action fails (therefore ignore error),
@@ -228,6 +247,64 @@ func (svc *Service) TryEnqueuePendingJobs() {
 	for _, j := range pendingJobs {
 		_ = svc.EnqueueJob(j)
 	}
+}
+
+func (svc *Service) AttemptJobRetries() {
+	// this function check if some jobs can be retried
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
+	// loop over the priority queue of retry jobs
+	minPriority := -time.Now().UnixMilli()
+	for {
+		// get the first job from the priority queue with priority >= minPriority
+		j, priority, ok := svc.pqRetryJobs.DequeueWithPriority(minPriority)
+		if !ok {
+			break
+		}
+		if err := svc.RetryJob(j); err != nil {
+			// the job cannot be retried
+			// so enqueue it back in the priority queue
+			svc.pqRetryJobs.Enqueue(j, priority)
+			// retry later
+			return
+		}
+	}
+}
+
+func (svc *Service) RetryJob(j *job.Job) error {
+	// Retry the job immediately
+	now := time.Now().UnixMilli()
+
+	// Enqueue the job by adding a history event
+	j.AddHistoryEvent(job.JobEventEnqueue, now)
+
+	// Notify the backend provider
+	if err := svc.bp.OnJobEnqueued(j); err != nil {
+		return err
+	}
+
+	// Update metrics
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterQueued++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobEnqueued,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
+	}
+
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job enqueued",
+			zap.String("topic", "service"),
+			zap.String("method", "RetryJob"),
+			zap.String("JobUUID", j.JobUUID.String()),
+		)
+	}
+
+	return nil
 }
 
 func (svc *Service) EnqueueJob(j *job.Job) error {
@@ -280,19 +357,24 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 	}
 
 	// Update metrics
-	svc.metrics.JobsCounterQueued++
-	svc.notifChanSvc <- ServiceEvent{
-		Type:    ServiceEventJobEnqueued,
-		Metrics: svc.metrics,
-		JobUUID: j.JobUUID,
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterQueued++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobEnqueued,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
 	}
 
-	svc.logger.Info(
-		"Job enqueued",
-		zap.String("topic", "service"),
-		zap.String("method", "EnqueueJob"),
-		zap.String("JobUUID", j.JobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job enqueued",
+			zap.String("topic", "service"),
+			zap.String("method", "EnqueueJob"),
+			zap.String("JobUUID", j.JobUUID.String()),
+		)
+	}
 
 	return nil
 }
@@ -300,21 +382,17 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 func (svc *Service) GenerateNewJobUuid() (job.JobUUID, error) {
 	// ensure new job uuid is unique
 	for {
-		candidate, err := uuid.NewV7()
+		uuidCandidate, err := uuid.NewV7()
 		if err != nil {
-			return job.JobUUID(candidate), &apierror.APIError{
+			return job.JobUUID(uuidCandidate), &apierror.APIError{
 				Message:  "cannot create job",
 				Code:     constants.ErrorCantCreateJob,
 				HttpCode: fiber.StatusInternalServerError,
 				Err:      err,
 			}
 		}
-		exists, err2 := svc.bp.JobExists(candidate)
-		if err2 != nil {
-			return job.JobUUID(candidate), err2
-		}
-		if !exists {
-			return job.JobUUID(candidate), nil
+		if _, exists := svc.jobs[uuidCandidate]; !exists {
+			return job.JobUUID(uuidCandidate), nil
 		}
 	}
 }
@@ -356,15 +434,18 @@ func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
 	// delete uuid from hashmap
 	svc.setJobMap(jobUUID, nil)
 
-	svc.logger.Info(
-		"Job deleted",
-		zap.String("topic", "service"),
-		zap.String("method", "DeleteJob"),
-		zap.String("JobUUID", jobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job deleted",
+			zap.String("topic", "service"),
+			zap.String("method", "DeleteJob"),
+			zap.String("JobUUID", jobUUID.String()),
+		)
+	}
 
-	svc.metrics.JobsCount--
-	svc.metrics.JobsCounterDeleted++
+	jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+	jobMetrics.JobsCounter--
+	jobMetrics.JobsCounterDeleted++
 	return nil
 }
 
@@ -376,12 +457,18 @@ func (svc *Service) DeleteAllJobs() error {
 		return err
 	}
 
-	cptJobsDeleted := uint(len(svc.jobs))
 	svc.jobs = make(job.JobMap)
 	svc.pendingJobs = make(job.JobMap)
 	svc.lockedResources = make(job.LockedResources)
-	svc.metrics.JobsCount -= cptJobsDeleted
-	svc.metrics.JobsCounterDeleted += cptJobsDeleted
+
+	// update metrics
+	for _, jobMetrics := range svc.metrics.JobMetricsByTopicMap {
+		jobMetrics.JobsCounterDeleted += jobMetrics.JobsCounter
+		jobMetrics.JobsCounter = 0
+		jobMetrics.JobsCounterPending = 0
+		jobMetrics.JobsCounterQueued = 0
+		jobMetrics.JobsCounterRunning = 0
+	}
 	return nil
 }
 
@@ -598,19 +685,24 @@ func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 	}
 
 	// update metrics
-	svc.metrics.JobsCounterRunning++
-	svc.notifChanSvc <- ServiceEvent{
-		Type:    ServiceEventJobStarted,
-		Metrics: svc.metrics,
-		JobUUID: j.JobUUID,
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterRunning++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobStarted,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
 	}
 
-	svc.logger.Info(
-		"Job started",
-		zap.String("topic", "service"),
-		zap.String("method", "StartJob"),
-		zap.String("JobUUID", jobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job started",
+			zap.String("topic", "service"),
+			zap.String("method", "StartJob"),
+			zap.String("JobUUID", jobUUID.String()),
+		)
+	}
 
 	return nil
 }
@@ -702,19 +794,24 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 	}
 
 	// update metrics
-	svc.metrics.JobsCounterSucceeded++
-	svc.notifChanSvc <- ServiceEvent{
-		Type:    ServiceEventJobSucceeded,
-		Metrics: svc.metrics,
-		JobUUID: j.JobUUID,
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterSucceeded++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobSucceeded,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
 	}
 
-	svc.logger.Info(
-		"Job succeeded",
-		zap.String("topic", "service"),
-		zap.String("method", "SetJobAsSuccessful"),
-		zap.String("JobUUID", jobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job succeeded",
+			zap.String("topic", "service"),
+			zap.String("method", "SetJobAsSuccessful"),
+			zap.String("JobUUID", jobUUID.String()),
+		)
+	}
 
 	svc.TryEnqueuePendingJobs()
 
@@ -776,19 +873,24 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	}
 
 	// update metrics
-	svc.metrics.JobsCounterCanceled++
-	svc.notifChanSvc <- ServiceEvent{
-		Type:    ServiceEventJobCanceled,
-		Metrics: svc.metrics,
-		JobUUID: j.JobUUID,
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterCanceled++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobCanceled,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
 	}
 
-	svc.logger.Info(
-		"Job canceled",
-		zap.String("topic", "service"),
-		zap.String("method", "CancelJob"),
-		zap.String("JobUUID", jobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job canceled",
+			zap.String("topic", "service"),
+			zap.String("method", "CancelJob"),
+			zap.String("JobUUID", jobUUID.String()),
+		)
+	}
 
 	// Enqueue the job by adding a history event
 	j.AddHistoryEvent(job.JobEventEnqueue, time.Now().UnixMilli())
@@ -799,19 +901,24 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	}
 
 	// Update metrics
-	svc.metrics.JobsCounterQueued++
-	svc.notifChanSvc <- ServiceEvent{
-		Type:    ServiceEventJobEnqueued,
-		Metrics: svc.metrics,
-		JobUUID: j.JobUUID,
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterQueued++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobEnqueued,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
 	}
 
-	svc.logger.Info(
-		"Job enqueued",
-		zap.String("topic", "service"),
-		zap.String("method", "CancelJob"),
-		zap.String("JobUUID", j.JobUUID.String()),
-	)
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job enqueued",
+			zap.String("topic", "service"),
+			zap.String("method", "CancelJob"),
+			zap.String("JobUUID", j.JobUUID.String()),
+		)
+	}
 
 	svc.TryEnqueuePendingJobs()
 
@@ -819,7 +926,145 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 }
 
 func (svc *Service) FailJob(jobUUID job.JobUUID) error {
-	return nil // TODO
+	// Mark a running job as failed
+	var err error
+
+	// get the job
+	j, err := svc.GetJob(jobUUID)
+	if j == nil {
+		apiErr := apierror.APIError{
+			Message:  "job not found",
+			Code:     constants.ErrorCantFailJob,
+			HttpCode: fiber.StatusBadRequest,
+			JobUUID:  jobUUID,
+			Err:      err,
+		}
+		svc.logger.Error(
+			"Cannot set job as failed",
+			zap.String("topic", "service"),
+			zap.String("method", "FailJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
+
+		return &apiErr
+	}
+
+	// check if the job is running
+	state, _ := j.GetState()
+	if state != job.JobRunning {
+		apiErr := apierror.APIError{
+			Message:  "job is not running",
+			Code:     constants.ErrorCantFailJob,
+			HttpCode: fiber.StatusBadRequest,
+			JobUUID:  jobUUID,
+			Err:      err,
+		}
+		svc.logger.Error(
+			"Cannot set job as failed",
+			zap.String("topic", "service"),
+			zap.String("method", "FailJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
+
+		return &apiErr
+	}
+
+	// fail the job (add a history event)
+	j.AddHistoryEvent(job.JobEventFail, time.Now().UnixMilli())
+
+	// notify the backend provider
+	if err = svc.bp.OnJobFailed(j); err != nil {
+		return err
+	}
+
+	// update metrics
+	if svc.conf.WebServer.Metrics.Enable {
+		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+		jobMetrics.JobsCounterFailed++
+		svc.notifChanMetrics <- ServiceEvent{
+			Type:    ServiceEventJobFailed,
+			Metrics: &svc.metrics,
+			JobUUID: j.JobUUID,
+		}
+	}
+
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job failed",
+			zap.String("topic", "service"),
+			zap.String("method", "FailJob"),
+			zap.String("JobUUID", jobUUID.String()),
+		)
+	}
+
+	now := time.Now().UnixMilli()
+
+	// if the job has failed too many times, set it as terminated
+	if j.GetCountFaillures() >= svc.conf.Jobs.RetryPolicy.MaxRetry {
+		// the job has failed too many times, set it as terminated
+		j.AddHistoryEvent(job.JobEventTerminate, now)
+
+		// notify the backend provider
+		if err = svc.bp.OnJobTerminated(j); err != nil {
+			return err
+		}
+
+		// update metrics
+		if svc.conf.WebServer.Metrics.Enable {
+			jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
+			jobMetrics.JobsCounterTerminated++
+			svc.notifChanMetrics <- ServiceEvent{
+				Type:    ServiceEventJobTerminated,
+				Metrics: &svc.metrics,
+				JobUUID: j.JobUUID,
+			}
+		}
+
+		if svc.conf.Jobs.LogVerbosity > 1 {
+			svc.logger.Info(
+				"Job terminated",
+				zap.String("topic", "service"),
+				zap.String("method", "FailJob"),
+				zap.String("reason", "Max retry limit reached"),
+				zap.String("JobUUID", jobUUID.String()),
+			)
+		}
+
+		svc.TryEnqueuePendingJobs()
+		return nil
+	}
+
+	// The job has not yet failed too many times
+	delay := svc.conf.Jobs.RetryPolicy.BackoffStrategy.ComputeDelay(j.GetCountFaillures())
+
+	// Check if the minimum duration between each retry is 0
+	if delay == 0 {
+		// Retry the job immediately
+		return svc.RetryJob(j)
+	}
+
+	// compute the next retry time (current time + duration between retry)
+	nextRetryTime := now + delay.Milliseconds()
+
+	// Add the job to a waiting list (priority queue) for retry
+	// Tip: the priority queue is sorted by the next retry time,
+	// the job with the smallest next retry time is at the top,
+	// that's why we use a negative value for the next retry time
+	svc.pqRetryJobs.Enqueue(j, -nextRetryTime)
+
+	if svc.conf.Jobs.LogVerbosity > 1 {
+		svc.logger.Info(
+			"Job added to the retry queue",
+			zap.String("topic", "service"),
+			zap.String("method", "FailJob"),
+			zap.String("JobUUID", j.JobUUID.String()),
+			zap.String("NextRetryTime", time.UnixMilli(nextRetryTime).String()),
+		)
+	}
+
+	return nil
 }
 
 func (svc *Service) ChangeVisibilityTimeoutJob(jobUUID job.JobUUID, visibilityTimeout uint) error {
@@ -945,16 +1190,24 @@ func (svc *Service) UnlockAllResources() error {
 }
 
 func (svc *Service) GetServiceEventChan() chan ServiceEvent {
-	return svc.notifChanSvc
+	return svc.notifChanMetrics
 }
 
 func (svc *Service) Healthcheck() bool {
 	return svc.bp.Healthcheck()
 }
 
-func (svc *Service) ComputeMetrics() error {
-	// svc.metrics            *metrics.Metrics
-	return nil // TODO svc.bp.ComputeMetrics()
+func (svc *Service) GetMetrics() *ServiceMetrics {
+	return &svc.metrics
+}
+
+func (svc *Service) GetJobsTopics() []string {
+	metrics := make([]string, 0, len(svc.metrics.JobMetricsByTopicMap))
+	for topic := range svc.metrics.JobMetricsByTopicMap {
+		metrics = append(metrics, topic)
+	}
+
+	return metrics
 }
 
 func (svc *Service) CheckJobsRetention() error {
@@ -963,8 +1216,8 @@ func (svc *Service) CheckJobsRetention() error {
 		return nil
 	}
 
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// this function is called periodically to check the retention policy
 	// if a job is completed and too old, it should be deleted
@@ -1035,8 +1288,8 @@ func (svc *Service) Watchdog() {
 		return
 	}
 
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// TODO
 	// if a job is too old and blocked by a resource unavailability, it should be deleted
@@ -1143,15 +1396,27 @@ func (svc *Service) Run() error {
 	// create a ticker for the job retention policy
 	jobRetentionTicker := time.NewTicker(time.Duration(max(svc.conf.Jobs.RetentionPolicy.Interval, 60)) * time.Second)
 
+	// create a ticker for job retry
+	jobRetryTicker := time.NewTicker(time.Duration(1) * time.Second)
+
 	// Run the job backend provider in a separate goroutine
 	go func() {
 		_ = svc.bp.Run()
 	}()
 
+	// Notify that the service is ready
+	svc.notifChanMetrics <- ServiceEvent{
+		Type:    ServiceEventReady,
+		Metrics: &svc.metrics,
+		Topic:   "",
+	}
+
 	for {
 		select {
 		case <-pendingJobsTicker.C:
 			svc.TryEnqueuePendingJobs()
+		case <-jobRetryTicker.C:
+			svc.AttemptJobRetries()
 		case <-watchdogTicker.C:
 			svc.Watchdog()
 		case <-jobRetentionTicker.C:
@@ -1161,6 +1426,7 @@ func (svc *Service) Run() error {
 			// received a signal to stop the service
 			// stop the tickers
 			pendingJobsTicker.Stop()
+			jobRetryTicker.Stop()
 			watchdogTicker.Stop()
 			jobRetentionTicker.Stop()
 			// stop and wait for the job backend provider to end (synchronous)
@@ -1181,6 +1447,7 @@ func (svc *Service) Run() error {
 				)
 				// stop the tickers
 				pendingJobsTicker.Stop()
+				jobRetryTicker.Stop()
 				watchdogTicker.Stop()
 				jobRetentionTicker.Stop()
 				// stop and wait for the job backend provider to end (synchronous)
@@ -1188,12 +1455,14 @@ func (svc *Service) Run() error {
 				// stop the main goroutine (the service is stopped)
 				return errors.New("job backend provider received a fatal error")
 			default:
-				svc.logger.Info(
-					"Event received",
-					zap.String("topic", "job"),
-					zap.String("method", "Run"),
-					zap.Any("eventType", event),
-				)
+				if svc.conf.Jobs.LogVerbosity > 2 {
+					svc.logger.Info(
+						"Event received",
+						zap.String("topic", "job"),
+						zap.String("method", "Run"),
+						zap.Any("eventType", event),
+					)
+				}
 			}
 		}
 	}
@@ -1205,14 +1474,15 @@ func NewService(logger *zap.Logger, conf *config.Config) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		logger:       logger,
-		conf:         conf,
-		bp:           bp,
-		jobs:         make(job.JobMap),
-		pendingJobs:  make(job.JobMap),
-		notifChanBP:  make(chan jobbackendprovider.Event, 100),
-		notifChanSvc: make(chan ServiceEvent, 100),
-		stopChan:     make(chan struct{}),
+		logger:           logger,
+		conf:             conf,
+		bp:               bp,
+		jobs:             make(job.JobMap),
+		pendingJobs:      make(job.JobMap),
+		notifChanBP:      make(chan jobbackendprovider.Event, 1000),
+		notifChanMetrics: make(chan ServiceEvent, 1000),
+		stopChan:         make(chan struct{}),
+		metrics:          NewSericeMetrics(),
 	}, nil
 }
 

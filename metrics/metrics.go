@@ -12,43 +12,41 @@ import (
 
 type Metrics struct {
 	JobDurationSeconds *prometheus.HistogramVec
-	JobsTotal          *prometheus.CounterVec
-	JobsInProgress     *prometheus.GaugeVec
+	JobsEventsCounter  *prometheus.CounterVec
+	JobsStatusGauge    *prometheus.GaugeVec
 	ConstLabels        prometheus.Labels
 	Registry           *prometheus.Registry
 	FiberPrometheus    *fiberprometheus.FiberPrometheus
-	notifChan          chan service.ServiceEvent // notification channel
+	notifChan          chan service.ServiceEvent
 	wg                 sync.WaitGroup
 }
 
 func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
 	// Create non-global registry.
 	m.Registry = prometheus.NewRegistry()
-
-	namespace := "job"
+	namespace := ""
 	subsystem := ""
-
 	m.ConstLabels = prometheus.Labels{}
 
-	m.JobsTotal = promauto.With(m.Registry).NewCounterVec(
+	m.JobsEventsCounter = promauto.With(m.Registry).NewCounterVec(
 		prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName(namespace, subsystem, "jobs_total"),
-			Help:        "Count all jobs by status code, method and path.",
+			Name:        prometheus.BuildFQName(namespace, subsystem, "jobs_events"),
+			Help:        "Count all jobs by event and topic.",
 			ConstLabels: m.ConstLabels,
 		},
-		[]string{"status_code", "method", "path"},
+		[]string{"event", "topic"},
 	)
 
-	m.JobsInProgress = promauto.With(m.Registry).NewGaugeVec(
+	m.JobsStatusGauge = promauto.With(m.Registry).NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name:        prometheus.BuildFQName(namespace, subsystem, "jobs_in_progress"),
-			Help:        "All the jobs in progress",
+			Name:        prometheus.BuildFQName(namespace, subsystem, "jobs_by_status"),
+			Help:        "Jobs by status and topic",
 			ConstLabels: m.ConstLabels,
-		}, []string{"method"},
+		}, []string{"status", "topic"},
 	)
 
 	buckets := []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 20, 30, 60}
-	labelNames := []string{"default", "topic", "others"} // TODO
+	labelNames := []string{"topic"}
 	m.JobDurationSeconds = promauto.With(m.Registry).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    prometheus.BuildFQName(namespace, subsystem, "job_duration_seconds"),
@@ -68,31 +66,68 @@ func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
 	go m.Run()
 }
 
+func (m *Metrics) InitCustomMetrics(e service.ServiceEvent) {
+	m.JobDurationSeconds.WithLabelValues("").Observe(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobCreated.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobEnqueued.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobStarted.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobSucceeded.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobCanceled.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobFailed.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobDeleted.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobTimeout.String(), "").Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobTerminated.String(), "").Add(0)
+	m.SetGauges(e)
+}
+
 func (m *Metrics) Shutdown() {
 	m.notifChan <- service.ServiceEvent{Type: service.ServiceEventShutdown}
 	m.wg.Wait()
 }
 
+func (m *Metrics) SetGauges(e service.ServiceEvent) {
+	topicMetric := e.Metrics.JobMetricsByTopicMap[e.Topic]
+	m.JobsStatusGauge.WithLabelValues("JobsCounter", e.Topic).Set(float64(topicMetric.JobsCounter))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterCreated", e.Topic).Set(float64(topicMetric.JobsCounterCreated))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterPending", e.Topic).Set(float64(topicMetric.JobsCounterPending))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterQueued", e.Topic).Set(float64(topicMetric.JobsCounterQueued))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterRunning", e.Topic).Set(float64(topicMetric.JobsCounterRunning))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterSucceeded", e.Topic).Set(float64(topicMetric.JobsCounterSucceeded))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterFailed", e.Topic).Set(float64(topicMetric.JobsCounterFailed))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterTerminated", e.Topic).Set(float64(topicMetric.JobsCounterTerminated))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterTimeout", e.Topic).Set(float64(topicMetric.JobsCounterTimeout))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterDeleted", e.Topic).Set(float64(topicMetric.JobsCounterDeleted))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterCanceled", e.Topic).Set(float64(topicMetric.JobsCounterCanceled))
+	m.JobsStatusGauge.WithLabelValues("JobsCounterFaillure", e.Topic).Set(float64(topicMetric.JobsCounterFaillure))
+}
+
 func (m *Metrics) Run() {
 	m.wg.Add(1)
+	defer m.wg.Done()
+
 	for e := range m.notifChan {
 		switch e.Type {
-		// case "job": // TODO
-		// 	// m.JobsTotal.WithLabelValues(e.Value, "GET", "/").Inc()
-		// case "duration": // TODO
-		// 	// m.JobDurationSeconds.WithLabelValues("default").Observe(e.Value)
-		// case "inprogress": // TODO
-		// 	// m.JobsInProgress.WithLabelValues("GET").Inc()
-		// case "completed": // TODO
-		// 	// m.JobsInProgress.WithLabelValues("GET").Dec()
-		// case "error": // TODO
-		// 	// m.JobsTotal.WithLabelValues("500", "GET", "/").Inc()
+		case service.ServiceEventJobCreated,
+			service.ServiceEventJobEnqueued,
+			service.ServiceEventJobStarted,
+			service.ServiceEventJobSucceeded,
+			service.ServiceEventJobCanceled,
+			service.ServiceEventJobFailed,
+			service.ServiceEventJobDeleted,
+			service.ServiceEventJobTimeout,
+			service.ServiceEventJobTerminated:
+			m.recordEvent(e)
+		case service.ServiceEventReady:
+			m.InitCustomMetrics(e)
 		case service.ServiceEventShutdown:
-			m.wg.Done()
 			return // exit the goroutine
-		default:
 		}
 	}
+}
+
+func (m *Metrics) recordEvent(e service.ServiceEvent) {
+	m.JobsEventsCounter.WithLabelValues(e.Type.String(), e.Topic).Inc()
+	m.SetGauges(e)
 }
 
 // NewMetrics returns a new Metrics instance.

@@ -19,10 +19,14 @@ const (
 	ServiceEventJobSucceeded
 	// ServiceEventJobCanceled is an event that is sent when a job is canceled
 	ServiceEventJobCanceled
+	// ServiceEventJobFailed is an event that is sent when a job is failed
+	ServiceEventJobFailed
 	// ServiceEventJobDeleted is an event that is sent when a job is deleted
 	ServiceEventJobDeleted
 	// ServiceEventJobTimeout is an event that is sent when a job is timeout
 	ServiceEventJobTimeout
+	// ServiceEventJobTerminated is an event that is sent when a job is terminated
+	ServiceEventJobTerminated
 	// ServiceEventJobDeletedAll is an event that is sent when all jobs are deleted
 	ServiceEventJobDeletedAll
 	// ServiceEventJobUnlockedAllResources is an event that is sent when all resources are unlocked
@@ -33,29 +37,37 @@ const (
 	ServiceEventJobMetrics
 	// ServiceEventJobWatchdog is an event that is sent when the watchdog is called
 	ServiceEventJobWatchdog
+	// ServiceEventReady is an event that is sent when the service is ready
+	ServiceEventReady
 	// ServiceEventShutdown is an event that is sent when the service is shutdown
 	ServiceEventShutdown
 )
 
+type JobMetrics struct {
+	ResourcesLockedCount  uint `json:"resourcesLockedCount"`  // number of current locked resources
+	JobsCounter           uint `json:"jobsCounter"`           // number of current existing jobs
+	JobsCounterCreated    uint `json:"jobsCounterCreated"`    // counter of total created jobs
+	JobsCounterPending    uint `json:"jobsCounterPending"`    // counter of total pending jobs
+	JobsCounterQueued     uint `json:"jobsCounterQueued"`     // counter of total queued jobs
+	JobsCounterRunning    uint `json:"jobsCounterRunning"`    // counter of total running jobs
+	JobsCounterSucceeded  uint `json:"jobsCounterSucceeded"`  // counter of total succeeded jobs
+	JobsCounterFailed     uint `json:"jobsCounterFailed"`     // counter of total failed jobs
+	JobsCounterTerminated uint `json:"jobsCounterTerminated"` // counter of total terminated jobs
+	JobsCounterTimeout    uint `json:"jobsCounterTimeout"`    // counter of total timeout jobs
+	JobsCounterDeleted    uint `json:"jobsCounterDeleted"`    // counter of total deleted jobs
+	JobsCounterCanceled   uint `json:"jobsCounterCanceled"`   // counter of total canceled jobs
+	JobsCounterFaillure   uint `json:"jobsCounterFaillure"`   // counter of total faillure jobs (this is not related to the status of the job)
+}
+
 type ServiceMetrics struct {
-	ResourcesLockedCount uint // number of current locked resources
-	JobsCount            uint // number of current existing jobs
-	JobsCounterCreated   uint // counter of total created jobs
-	JobsCounterPending   uint // counter of total pending jobs
-	JobsCounterQueued    uint // counter of total queued jobs
-	JobsCounterRunning   uint // counter of total running jobs
-	JobsCounterSucceeded uint // counter of total succeeded jobs
-	JobsCounterFailed    uint // counter of total failed jobs
-	JobsCounterTimeout   uint // counter of total timeout jobs
-	JobsCounterDeleted   uint // counter of total deleted jobs
-	JobsCounterCanceled  uint // counter of total canceled jobs
-	JobsCounterFaillure  uint // counter of total faillure jobs (this is not related to the status of the job)
+	JobMetricsByTopicMap map[string]*JobMetrics `json:"jobsTopics"` // metrics by topic
 }
 
 type ServiceEvent struct {
 	Type    ServiceEventType
-	Metrics ServiceMetrics
+	Metrics *ServiceMetrics
 	JobUUID job.JobUUID
+	Topic   string
 }
 
 type RequestPullJobs struct {
@@ -93,9 +105,43 @@ type IService interface {
 	UnlockAllResources() error
 	ChangeVisibilityTimeoutJob(job.JobUUID, uint) error
 	Healthcheck() bool
-	ComputeMetrics() error
+	GetMetrics() *ServiceMetrics
+	GetJobsTopics() []string
 	TryEnqueuePendingJobs()
 	Watchdog()
 	GetServiceEventChan() chan ServiceEvent
 	GetLogger() *zap.Logger
+}
+
+func (t ServiceEventType) String() string {
+	switch t {
+	case ServiceEventJobCreated:
+		return "JobCreated"
+	case ServiceEventJobEnqueued:
+		return "JobEnqueued"
+	case ServiceEventJobStarted:
+		return "JobStarted"
+	case ServiceEventJobSucceeded:
+		return "JobSucceeded"
+	case ServiceEventJobCanceled:
+		return "JobCanceled"
+	case ServiceEventJobFailed:
+		return "JobFailed"
+	case ServiceEventJobDeleted:
+		return "JobDeleted"
+	case ServiceEventJobTimeout:
+		return "JobTimeout"
+	case ServiceEventJobTerminated:
+		return "JobTerminated"
+	default:
+		return "other"
+	}
+}
+
+func NewSericeMetrics() ServiceMetrics {
+	m := make(map[string]*JobMetrics)
+	m[""] = &JobMetrics{}
+	return ServiceMetrics{
+		JobMetricsByTopicMap: m,
+	}
 }

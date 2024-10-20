@@ -100,6 +100,22 @@ func (p *MockJobBackendProvider) OnJobCanceled(j *job.Job) error {
 	return nil
 }
 
+func (p *MockJobBackendProvider) OnJobFailed(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobFailed, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *MockJobBackendProvider) OnJobTerminated(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobTerminated, JobUUID: j.JobUUID})
+	return nil
+}
+
 func (p *MockJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

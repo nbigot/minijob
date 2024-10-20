@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/healthcheck"
 	"github.com/gofiber/fiber/v2/middleware/monitor"
+	"github.com/gofiber/fiber/v2/middleware/pprof"
 	"github.com/gofiber/swagger"
 	"github.com/qri-io/jsonschema"
 
@@ -55,7 +56,9 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 	apiJobs := api.Group("/jobs")
 	apiJobs.Get("/", w.GetAllJobs)
-	apiJobs.Get("/monitor", w.JobsMonitor)
+	apiJobs.Get("/topics", w.GetJobsTopics)
+	apiJobs.Get("/metrics", w.GetJobsMetrics)
+	apiJobs.Get("/monitor", w.GetJobsMonitoring)
 	apiJobs.Delete("/", w.DeleteAllJobs)
 
 	apiResources := api.Group("/resources")
@@ -65,8 +68,6 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiAdmin := api.Group("/admin")
 	apiAdmin.Post("/server/shutdown", w.ApiServerShutdown)
 	apiAdmin.Post("/server/restart", w.ApiServerRestart)
-
-	api.Post("/computemetrics", w.ComputeMetrics)
 
 	// Add healthcheck
 	app.Get("/ping", w.Ping)
@@ -86,6 +87,7 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 	if w.appConfig.WebServer.Monitor.Enable {
 		app.Get("/monitor", monitor.New())
+		app.Use(pprof.New())
 	}
 
 	if w.appConfig.WebServer.Swagger.Enable {

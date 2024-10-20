@@ -273,6 +273,19 @@ func (j *Job) AddHistoryEvent(eventType string, timestamp int64) {
 	})
 }
 
+func (j *Job) GetCountLockResources() uint {
+	state, err := j.GetState()
+	if err != nil {
+		return 0
+	}
+	switch state {
+	case JobQueued, JobRunning:
+		return uint(len(j.LockResources))
+	default:
+		return 0
+	}
+}
+
 func NewJob(payload []byte) (*Job, error) {
 	// Create a new job from a backend (redis) payload
 	j := &Job{}

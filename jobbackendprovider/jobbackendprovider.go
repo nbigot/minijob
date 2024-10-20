@@ -20,6 +20,10 @@ const (
 	EventJobSucceeded
 	// EventJobCanceled is an event that is sent when a job is canceled
 	EventJobCanceled
+	// EventJobFailed is an event that is sent when a job is failed
+	EventJobFailed
+	// EventJobTerminated is an event that is sent when a job is terminated
+	EventJobTerminated
 	// EventJobTimeout is an event that is sent when a job is timeout
 	EventJobTimeout
 	// EventAllJobsDeleted is an event that is sent when all jobs are deleted
@@ -48,7 +52,9 @@ type IJobBackendProvider interface {
 	OnJobStarted(j *job.Job) error
 	OnJobSucceeded(j *job.Job) error
 	OnJobTimeout(j *job.Job) error
+	OnJobFailed(j *job.Job) error
 	OnJobCanceled(j *job.Job) error
+	OnJobTerminated(j *job.Job) error
 	OnJobDeleted(jobUUID job.JobUUID) error
 	OnJobsDeleted() error
 	OnAllResourcesUnlocked() error

@@ -17,7 +17,7 @@ import (
 type Service struct {
 	// implements IService interface
 	notifChanBP chan jobbackendprovider.Event // notification channel for job backend provider
-	// notifChanSvc chan ServiceEvent                      // notification channel for metrics
+	// notifChanMetrics chan ServiceEvent                      // notification channel for metrics
 	wg       sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
 	stopChan chan struct{}                          // stopChan is a channel to stop the Run function
 	running  atomic.Bool                            // Add this to track if the service is running
@@ -104,8 +104,8 @@ func NewService() (*Service, error) {
 	}
 	return &Service{
 		bp:          bp,
-		notifChanBP: make(chan jobbackendprovider.Event, 100),
-		// notifChanSvc: make(chan ServiceEvent, 100),
+		notifChanBP: make(chan jobbackendprovider.Event, 1000),
+		// notifChanMetrics: make(chan ServiceEvent, 1000),
 		stopChan: make(chan struct{}),
 	}, nil
 }
