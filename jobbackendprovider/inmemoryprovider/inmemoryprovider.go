@@ -19,7 +19,8 @@ type InMemoryJobBackendProvider struct {
 	logger                  *zap.Logger                   // logger is the logger
 	logVerbosity            int                           // logVerbosity is the log verbosity level
 	mu                      sync.Mutex                    // mu is a mutex to protect the jobs hashmap
-	hasChanged              bool                          // hasChanged is a flag to indicate if at least on job has changed
+	mapMutex                sync.RWMutex                  // mutex to protect hashmap of jobs
+	hasChanged              atomic.Bool                   // hasChanged is a flag to indicate if at least on job has changed
 	jobs                    job.JobMap                    // hashmap of jobs
 	maxJobs                 uint                          // maxJobs is the maximum number of jobs that can be stored in the backend
 	writeFrequency          int                           // writeFrequency is the frequency in seconds to write the jobs to the storage
@@ -55,10 +56,9 @@ func (p *InMemoryJobBackendProvider) Stop() error {
 }
 
 func (p *InMemoryJobBackendProvider) JobExists(jobUUID job.JobUUID) (bool, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	p.mapMutex.RLock()
 	_, ok := p.jobs[jobUUID]
+	p.mapMutex.RUnlock()
 	if ok {
 		return true, nil
 	}
@@ -71,22 +71,28 @@ func (p *InMemoryJobBackendProvider) LoadJobs() (job.JobMap, error) {
 
 	if p.enablePersistantStorage {
 		var err error
+		p.mapMutex.Lock()
 		p.jobs, err = p.storage.Load()
+		p.mapMutex.Unlock()
 		if err != nil {
 			return nil, err
 		}
 		// make a copy of the jobs
 		// this is to prevent the caller from modifying the jobs hashmap
 		jobsCopy := make(job.JobMap)
+		p.mapMutex.RLock()
 		for k, v := range p.jobs {
 			jobsCopy[k] = v
 		}
-		p.hasChanged = false
+		p.mapMutex.RUnlock()
+		p.hasChanged.Store(false)
 		return jobsCopy, nil
 	}
 
-	p.hasChanged = false
+	p.hasChanged.Store(false)
+	p.mapMutex.Lock()
 	p.jobs = make(job.JobMap)
+	p.mapMutex.Unlock()
 	// make a copy of the jobs (even if it's empty)
 	// this is to prevent the caller from modifying the jobs hashmap
 	jobsCopy := make(job.JobMap)
@@ -100,109 +106,84 @@ func (p *InMemoryJobBackendProvider) SaveToFile() error {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.mapMutex.RLock()
+	defer p.mapMutex.RUnlock()
 	return p.storage.Save(p.jobs)
 }
 
 func (p *InMemoryJobBackendProvider) OnJobCreated(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	p.mapMutex.Lock()
 	if uint(len(p.jobs)) == p.maxJobs {
+		p.mapMutex.Unlock()
 		return fmt.Errorf("cannot create job, max limit reached: %d", p.maxJobs)
 	}
 
 	p.jobs[j.JobUUID] = j
+	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobCreated, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobEnqueued(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	p.mapMutex.Lock()
 	p.jobs[j.JobUUID] = j
+	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobEnqueued, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobCanceled(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobCanceled, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobFailed(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobFailed, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobTerminated(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobTerminated, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	p.mapMutex.Lock()
 	delete(p.jobs, jobUUID)
+	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobDeleted, JobUUID: jobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobStarted(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobStarted, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobSucceeded(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobSucceeded, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobTimeout(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobTimeout, JobUUID: j.JobUUID})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobsDeleted() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	p.mapMutex.Lock()
 	p.jobs = make(job.JobMap)
+	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventAllJobsDeleted})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnAllResourcesUnlocked() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventAllResourcesUnlocked})
 	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnResourceUnlocked(j *job.Job, resource string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventResourceUnlocked, JobUUID: j.JobUUID, Resource: &resource})
 	return nil
 }
@@ -217,7 +198,7 @@ func (p *InMemoryJobBackendProvider) NotifyChange(event jobbackendprovider.Event
 		)
 	}
 
-	p.hasChanged = true
+	p.hasChanged.Store(true)
 	p.notifChan <- event
 }
 
@@ -253,7 +234,7 @@ func (p *InMemoryJobBackendProvider) Run() error {
 
 func (p *InMemoryJobBackendProvider) sync() error {
 	// Check if there are changes to be synchronized
-	if !p.hasChanged {
+	if !p.hasChanged.Load() {
 		return nil
 	}
 
@@ -265,7 +246,7 @@ func (p *InMemoryJobBackendProvider) sync() error {
 	}
 
 	// Reset the change flag after synchronization
-	p.hasChanged = false
+	p.hasChanged.Store(false)
 	return nil
 }
 
@@ -291,7 +272,7 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 		writeFrequency:          writeFrequency,
 		enablePersistantStorage: conf.Backend.InMemory.EnablePersistantStorage,
 		storage:                 NewDBFileStorage(logger, conf.Backend.InMemory.Directory, conf.Backend.InMemory.Filename),
-		hasChanged:              false,
+		hasChanged:              atomic.Bool{},
 		stopChan:                make(chan bool, 1),
 	}, nil
 }

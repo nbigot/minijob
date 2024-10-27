@@ -62,11 +62,6 @@ type ConsulConfig struct {
 	} `yaml:"healthCheck"`
 }
 
-type WatchdogConfig struct {
-	Enable   bool `yaml:"enable"`   // Enable watchdog
-	Interval int  `yaml:"interval"` // Interval in seconds
-}
-
 type Config struct {
 	Backend struct {
 		Type         string     `yaml:"type" example:"redis"` // Type of backend to use (redis, inMemory)
@@ -110,7 +105,6 @@ type Config struct {
 	} `yaml:"jobs"`
 	LoggerConfig zap.Config      `yaml:"logger"`
 	WebServer    WebServerConfig `yaml:"webserver"`
-	Watchdog     WatchdogConfig  `yaml:"watchdog"`
 	Consul       ConsulConfig    `yaml:"consul"`
 }
 

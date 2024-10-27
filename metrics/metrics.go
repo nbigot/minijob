@@ -14,6 +14,7 @@ type Metrics struct {
 	JobDurationSeconds *prometheus.HistogramVec
 	JobsEventsCounter  *prometheus.CounterVec
 	JobsStatusGauge    *prometheus.GaugeVec
+	JobsCounterGauge   *prometheus.GaugeVec
 	ConstLabels        prometheus.Labels
 	Registry           *prometheus.Registry
 	FiberPrometheus    *fiberprometheus.FiberPrometheus
@@ -30,7 +31,7 @@ func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
 
 	m.JobsEventsCounter = promauto.With(m.Registry).NewCounterVec(
 		prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName(namespace, subsystem, "jobs_events"),
+			Name:        prometheus.BuildFQName(namespace, subsystem, "job_events"),
 			Help:        "Count all jobs by event and topic.",
 			ConstLabels: m.ConstLabels,
 		},
@@ -39,17 +40,25 @@ func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
 
 	m.JobsStatusGauge = promauto.With(m.Registry).NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name:        prometheus.BuildFQName(namespace, subsystem, "jobs_by_status"),
+			Name:        prometheus.BuildFQName(namespace, subsystem, "job_status"),
 			Help:        "Jobs by status and topic",
 			ConstLabels: m.ConstLabels,
 		}, []string{"status", "topic"},
+	)
+
+	m.JobsCounterGauge = promauto.With(m.Registry).NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName(namespace, subsystem, "job_counter"),
+			Help:        "Jobs counter by topic",
+			ConstLabels: m.ConstLabels,
+		}, []string{"topic"},
 	)
 
 	buckets := []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 20, 30, 60}
 	labelNames := []string{"topic"}
 	m.JobDurationSeconds = promauto.With(m.Registry).NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    prometheus.BuildFQName(namespace, subsystem, "job_duration_seconds"),
+			Name:    prometheus.BuildFQName(namespace, subsystem, "job_duration"),
 			Help:    "A histogram of the job durations in seconds.",
 			Buckets: buckets,
 		},
@@ -87,18 +96,18 @@ func (m *Metrics) Shutdown() {
 
 func (m *Metrics) SetGauges(e service.ServiceEvent) {
 	topicMetric := e.Metrics.JobMetricsByTopicMap[e.Topic]
-	m.JobsStatusGauge.WithLabelValues("JobsCounter", e.Topic).Set(float64(topicMetric.JobsCounter))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterCreated", e.Topic).Set(float64(topicMetric.JobsCounterCreated))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterPending", e.Topic).Set(float64(topicMetric.JobsCounterPending))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterQueued", e.Topic).Set(float64(topicMetric.JobsCounterQueued))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterRunning", e.Topic).Set(float64(topicMetric.JobsCounterRunning))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterSucceeded", e.Topic).Set(float64(topicMetric.JobsCounterSucceeded))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterFailed", e.Topic).Set(float64(topicMetric.JobsCounterFailed))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterTerminated", e.Topic).Set(float64(topicMetric.JobsCounterTerminated))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterTimeout", e.Topic).Set(float64(topicMetric.JobsCounterTimeout))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterDeleted", e.Topic).Set(float64(topicMetric.JobsCounterDeleted))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterCanceled", e.Topic).Set(float64(topicMetric.JobsCounterCanceled))
-	m.JobsStatusGauge.WithLabelValues("JobsCounterFaillure", e.Topic).Set(float64(topicMetric.JobsCounterFaillure))
+	m.JobsCounterGauge.WithLabelValues(e.Topic).Set(float64(topicMetric.JobsCounter))
+	m.JobsStatusGauge.WithLabelValues("Created", e.Topic).Set(float64(topicMetric.JobsCounterCreated))
+	m.JobsStatusGauge.WithLabelValues("Pending", e.Topic).Set(float64(topicMetric.JobsCounterPending))
+	m.JobsStatusGauge.WithLabelValues("Queued", e.Topic).Set(float64(topicMetric.JobsCounterQueued))
+	m.JobsStatusGauge.WithLabelValues("Running", e.Topic).Set(float64(topicMetric.JobsCounterRunning))
+	m.JobsStatusGauge.WithLabelValues("Succeeded", e.Topic).Set(float64(topicMetric.JobsCounterSucceeded))
+	m.JobsStatusGauge.WithLabelValues("Failed", e.Topic).Set(float64(topicMetric.JobsCounterFailed))
+	m.JobsStatusGauge.WithLabelValues("Terminated", e.Topic).Set(float64(topicMetric.JobsCounterTerminated))
+	m.JobsStatusGauge.WithLabelValues("Timeout", e.Topic).Set(float64(topicMetric.JobsCounterTimeout))
+	m.JobsStatusGauge.WithLabelValues("Deleted", e.Topic).Set(float64(topicMetric.JobsCounterDeleted))
+	m.JobsStatusGauge.WithLabelValues("Canceled", e.Topic).Set(float64(topicMetric.JobsCounterCanceled))
+	m.JobsStatusGauge.WithLabelValues("Faillure", e.Topic).Set(float64(topicMetric.JobsCounterFaillure))
 }
 
 func (m *Metrics) Run() {

@@ -24,21 +24,23 @@ import (
 
 type Service struct {
 	// implements IService interface
-	jobs             job.JobMap                             // hashmap of jobs
-	pendingJobs      job.JobMap                             // hashmap of pending jobs
-	pqRetryJobs      pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
-	lockedResources  job.LockedResources                    // map of locked resources
-	mu               sync.Mutex                             // to ensure safe concurrent manipulation of jobs
-	mapMutex         sync.RWMutex                           // mutex to protect hashmap of jobs
-	notifChanBP      chan jobbackendprovider.Event          // notification channel for job backend provider
-	notifChanMetrics chan ServiceEvent                      // notification channel for metrics
-	metrics          ServiceMetrics                         // metrics
-	wg               sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
-	stopChan         chan struct{}                          // stopChan is a channel to stop the Run function
-	running          atomic.Bool                            // Add this to track if the service is running
-	bp               jobbackendprovider.IJobBackendProvider // backend provider
-	conf             *config.Config                         // configuration
-	logger           *zap.Logger                            // logger
+	jobs                       job.JobMap                             // hashmap of jobs
+	pendingJobs                job.JobMap                             // hashmap of pending jobs
+	pqRetryJobs                pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
+	lockedResources            job.LockedResources                    // map of locked resources
+	mu                         sync.Mutex                             // to ensure safe concurrent manipulation of jobs
+	mapMutex                   sync.RWMutex                           // mutex to protect hashmap of jobs
+	checkJobsRetentionRunning  atomic.Value                           // atomic value to track if the check jobs retention is running
+	checkJobsVisibilityRunning atomic.Value                           // atomic value to track if the check jobs visibility is running
+	notifChanBP                chan jobbackendprovider.Event          // notification channel for job backend provider
+	notifChanMetrics           chan ServiceEvent                      // notification channel for metrics
+	metrics                    ServiceMetrics                         // metrics
+	wg                         sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
+	stopChan                   chan struct{}                          // stopChan is a channel to stop the Run function
+	running                    atomic.Bool                            // Add this to track if the service is running
+	bp                         jobbackendprovider.IJobBackendProvider // backend provider
+	conf                       *config.Config                         // configuration
+	logger                     *zap.Logger                            // logger
 }
 
 func (svc *Service) Init() error {
@@ -218,21 +220,34 @@ func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
 	return j, nil
 }
 
+func requiresLockedResources(job *job.Job, lockedResources map[string]uuid.UUID) bool {
+	// Helper function to check if a job requires locked resources
+	for _, r := range job.LockResources {
+		if _, found := lockedResources[r]; found {
+			return true
+		}
+	}
+	return false
+}
+
 func (svc *Service) TryEnqueuePendingJobs() {
-	// this function check if a pending job can be enqueued
+	// This function check if a pending job can be enqueued
 	// if a job is pending and the resources are available the job is enqueued
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
 	// optimization: if there are no pending jobs, return
-	if len(svc.pendingJobs) == 0 {
+	cptPendingJobs := len(svc.pendingJobs)
+	if cptPendingJobs == 0 {
 		return
 	}
 
 	// create a list of pending jobs from variable svc.pendingJobs for sorting
 	pendingJobs := make([]*job.Job, 0, len(svc.pendingJobs))
 	for _, j := range svc.pendingJobs {
-		pendingJobs = append(pendingJobs, j)
+		if !requiresLockedResources(j, svc.lockedResources) {
+			pendingJobs = append(pendingJobs, j)
+		}
 	}
 
 	// sort the pending jobs by (priority, creation date)
@@ -286,12 +301,13 @@ func (svc *Service) RetryJob(j *job.Job) error {
 
 	// Update metrics
 	if svc.conf.WebServer.Metrics.Enable {
-		jobMetrics, _ := svc.metrics.JobMetricsByTopicMap[j.Topic]
-		jobMetrics.JobsCounterQueued++
-		svc.notifChanMetrics <- ServiceEvent{
-			Type:    ServiceEventJobEnqueued,
-			Metrics: &svc.metrics,
-			JobUUID: j.JobUUID,
+		if jobMetrics, exists := svc.metrics.JobMetricsByTopicMap[j.Topic]; exists {
+			jobMetrics.JobsCounterQueued++
+			svc.notifChanMetrics <- ServiceEvent{
+				Type:    ServiceEventJobEnqueued,
+				Metrics: &svc.metrics,
+				JobUUID: j.JobUUID,
+			}
 		}
 	}
 
@@ -381,6 +397,9 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 
 func (svc *Service) GenerateNewJobUuid() (job.JobUUID, error) {
 	// ensure new job uuid is unique
+	svc.mapMutex.RLock()
+	defer svc.mapMutex.RUnlock()
+
 	for {
 		uuidCandidate, err := uuid.NewV7()
 		if err != nil {
@@ -416,20 +435,33 @@ func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
 			zap.String("JobUUID", jobUUID.String()),
 			zap.Error(err),
 		)
-
 		return &apiErr
 	}
 
 	if err = svc.UnlockJobResources(j); err != nil {
+		svc.logger.Error(
+			"Cannot delete job",
+			zap.String("topic", "service"),
+			zap.String("method", "DeleteJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	if err = svc.bp.OnJobDeleted(jobUUID); err != nil {
+		svc.logger.Error(
+			"Failing to delete job from backend provider",
+			zap.String("topic", "service"),
+			zap.String("method", "DeleteJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
 		return err
 	}
 
 	// Remove the job from the pending jobs (if it is in the pending jobs)
 	delete(svc.pendingJobs, j.JobUUID)
-
-	if err = svc.bp.OnJobDeleted(jobUUID); err != nil {
-		return err
-	}
 
 	// delete uuid from hashmap
 	svc.setJobMap(jobUUID, nil)
@@ -450,8 +482,8 @@ func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
 }
 
 func (svc *Service) DeleteAllJobs() error {
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mapMutex.Lock()
+	defer svc.mapMutex.Unlock()
 
 	if err := svc.bp.OnJobsDeleted(); err != nil {
 		return err
@@ -540,6 +572,9 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 
 func (svc *Service) FindBestJobCandidates(req *RequestPullJobs) ([]*job.Job, error) {
 	// find the best job candidates to start
+	svc.mapMutex.RLock()
+	defer svc.mapMutex.RUnlock()
+
 	if len(svc.jobs) == 0 {
 		// job not found in the queue
 		return nil, &apierror.APIError{
@@ -607,7 +642,9 @@ func (svc *Service) PullSpecificJob(req *RequestPullJobs) (*ResponsePullJobs, er
 
 	jobUUID := *req.JobUUID
 
+	svc.mapMutex.RLock()
 	if j, found := svc.jobs[jobUUID]; found {
+		svc.mapMutex.RUnlock()
 		if err := svc.StartJob(jobUUID, req); err != nil {
 			return nil, err
 		}
@@ -616,6 +653,7 @@ func (svc *Service) PullSpecificJob(req *RequestPullJobs) (*ResponsePullJobs, er
 			Jobs: []*job.Job{j},
 		}, nil
 	}
+	svc.mapMutex.RUnlock()
 
 	// job not found in the queue
 	return nil, &apierror.APIError{
@@ -1210,157 +1248,115 @@ func (svc *Service) GetJobsTopics() []string {
 	return metrics
 }
 
-func (svc *Service) CheckJobsRetention() error {
+func (svc *Service) CheckJobsRetention() {
 	// Check if the retention policy is enabled
 	if !svc.conf.Jobs.RetentionPolicy.Enable {
-		return nil
+		return
 	}
+
+	// Return immediately if this function is already running
+	// it will retry on the next call (called periodically)
+	if svc.checkJobsRetentionRunning.Load().(bool) {
+		return
+	}
+
+	// Set the flag to true
+	svc.checkJobsRetentionRunning.Store(true)
+	defer svc.checkJobsRetentionRunning.Store(false)
 
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
-	// this function is called periodically to check the retention policy
-	// if a job is completed and too old, it should be deleted
-	now := time.Now().UnixMilli()
-	defaultJobRetentionDurationMs := int64(max(0, svc.conf.Jobs.RetentionPolicy.MaxJobAge)) * 1000
+	svc.DeleteOldCompletedJobs()
+}
 
-	var jobsToDelete []job.JobUUID
-
-	// check if the jobs are too old
-	for _, j := range svc.jobs {
-		if now-j.GetLastUpdateDate() >= defaultJobRetentionDurationMs {
-			// flag the job for deletion
-			jobsToDelete = append(jobsToDelete, j.JobUUID)
-		}
+func (svc *Service) DeleteOldCompletedJobs() {
+	// check if the retention policy is enabled
+	if !svc.conf.Jobs.RetentionPolicy.Enable {
+		return
 	}
 
-	// delete the old jobs
-	for _, jobUUID := range jobsToDelete {
-		if err := svc.DeleteJob(jobUUID); err != nil {
-			return err
-		}
-	}
-
-	// check if the number of completed remaining jobs is too high
-	if svc.conf.Jobs.RetentionPolicy.MaxJobs <= 0 {
-		return nil
-	}
-
-	// check if the number of jobs is too high
-	cptCompletedJobsToDelete := len(svc.jobs) - svc.conf.Jobs.RetentionPolicy.MaxJobs
-	if cptCompletedJobsToDelete <= 0 {
-		return nil
-	}
-
-	// sort the jobs by last update date
-	// then delete the oldest jobs
-	// Extract completed jobs into a slice
+	// filter the completed jobs
+	svc.mapMutex.RLock()
 	completedJobs := make([]*job.Job, 0, len(svc.jobs))
 	for _, job := range svc.jobs {
-		// only consider completed jobs
 		if job.IsCompleted() {
 			completedJobs = append(completedJobs, job)
 		}
 	}
+	svc.mapMutex.RUnlock()
 
 	// Sort jobs by the oldest event in their history
 	sort.Slice(completedJobs, func(i, j int) bool {
 		return completedJobs[i].GetLastUpdateDate() < completedJobs[j].GetLastUpdateDate()
 	})
 
+	// check if the number of completed remaining jobs is too high
+
+	// check if the number of jobs is too high
+	cptCompletedJobsToDelete := 0
+	if svc.conf.Jobs.RetentionPolicy.MaxJobs >= 0 {
+		cptCompletedJobsToDelete = max(0, len(completedJobs)-svc.conf.Jobs.RetentionPolicy.MaxJobs)
+	}
+
+	// delete the oldest completed jobs
+	now := time.Now().UnixMilli()
+
+	maxJobAge := int64(^uint64(0) >> 1)
+	if svc.conf.Jobs.RetentionPolicy.MaxJobAge >= 0 {
+		maxJobAge = int64(max(0, svc.conf.Jobs.RetentionPolicy.MaxJobAge)) * 1000
+	}
 	cptDeletedJobs := 0
 	for _, j := range completedJobs {
-		if err := svc.DeleteJob(j.JobUUID); err != nil {
-			return err
-		}
-		cptDeletedJobs++
-		if cptDeletedJobs >= cptCompletedJobsToDelete {
-			break
+		if cptDeletedJobs < cptCompletedJobsToDelete || now-j.GetLastUpdateDate() >= maxJobAge {
+			if err := svc.DeleteJob(j.JobUUID); err != nil {
+				return
+			}
+			cptDeletedJobs++
 		}
 	}
-
-	return nil
 }
 
-func (svc *Service) Watchdog() {
-	// Check if the watchdog is enabled
-	if !svc.conf.Watchdog.Enable {
+func (svc *Service) CheckJobsVisibility() {
+	// This function is called periodically to check the visibility of the jobs
+
+	// Return immediately if this function is already running
+	// it will retry on the next call (called periodically)
+	if svc.checkJobsVisibilityRunning.Load().(bool) {
 		return
 	}
+
+	// Set the flag to true
+	svc.checkJobsVisibilityRunning.Store(true)
+	defer svc.checkJobsVisibilityRunning.Store(false)
 
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
-	// TODO
-	// if a job is too old and blocked by a resource unavailability, it should be deleted
-	// if a job is too old and blocked by a resource unavailability, an alarm should be sent
+	// Create a list of jobs that have been running for too long
+	svc.mapMutex.RLock()
+	now := time.Now().UnixMilli()
+	runningForTooLongJobs := make([]*job.Job, 0, len(svc.jobs))
+	for _, j := range svc.jobs {
+		// Check if the job is running
+		state, _ := j.GetState()
+		if state == job.JobRunning {
+			// Check if the job is running for too long
+			if now-j.GetLastUpdateDate() >= int64(j.VisibilityTimeout*1000) {
+				runningForTooLongJobs = append(runningForTooLongJobs, j)
+			}
+		}
+	}
+	svc.mapMutex.RUnlock()
 
-	// For each job:
-	// for _, j := range svc.jobs {
-
-	// 	if j.IsTooOld() {
-	// 		// check if the job is too old
-	// 		// send an alarm
-	// 		// TODO
-	// 	}
-
-	// 	if j.HasTooManyRetries() {
-	// 		// check if the job has too many retries
-	// 		// send an alarm
-	// 		// TODO
-	// 	}
-
-	// 	state, err := j.GetState()
-	// 	if err != nil {
-	// 		return err
-	// 	}
-
-	// 	if state == job.JobStateStarted {
-	// 		// check if the job is in state started
-	// 		// send an alarm
-	// 		// TODO
-
-	// 		// check if the job is still running
-	// 		// if the job is not running, send an alarm
-	// 		// TODO
-
-	// 	}
-
-	// 	if j.IsRunningForTooLong() {
-	// 		// check if the job is running for too long
-	// 		// send an alarm
-	// 		// TODO
-
-	// 		// kill the job
-	// 		// TODO
-	// 	}
-	// }
-
-	// - check if the job is too old
-	// - check if the job has too many retries
-	// - check if the job is in state started
-	// - if any of the above is true, send an alarm
-	// - if the job is in state started, check if the job is still running
-	// - if the job is not running, send an alarm
-	// - if the job is running, check if the job is running for too long
-	// - if the job is running for too long, send an alarm
-	// - if the job is running for too long, kill the job
-
-	// add an alarm to the alarm list
-
-	// this function is called periodically to check the health of the service
-	// if the service is not healthy, it should return an alarm
-	// perform health check on jobs
-	// if a job is stuck, return an alarm
-	// Check for any job started long time ago,
-	// assume it's interrupted or broken and notify it for eventual restart (visibility timeout).
-	// watchdog alarm --> notify channel event --> restart (visibility timeout) job
-
-	// job_max_duration_alarm_seconds := svc.conf.Jobs.MaxDurationAlarmSeconds
-
-	// jobsStartedTooLongAgo := make([]job.JobUUID, 0)
-
-	// jobsCreatedTooLongAgoAndBlockedByResourceInavailabilty := make([]job.JobUUID, 0)
+	for _, j := range runningForTooLongJobs {
+		svc.logger.Info(
+			"Job is running for too long",
+			zap.String("method", "CheckJobsVisibility"),
+			zap.String("JobUUID", string(j.JobUUID.String())),
+		)
+		_ = svc.FailJob(j.JobUUID)
+	}
 }
 
 func (svc *Service) Run() error {
@@ -1390,8 +1386,8 @@ func (svc *Service) Run() error {
 	// create a ticker for the pending jobs
 	pendingJobsTicker := time.NewTicker(time.Duration(1) * time.Second)
 
-	// create a ticker for the watchdog
-	watchdogTicker := time.NewTicker(time.Duration(max(svc.conf.Watchdog.Interval, 5)) * time.Second)
+	// create a ticker for the job visibility
+	jobVisibilityTicket := time.NewTicker(time.Duration(1) * time.Second)
 
 	// create a ticker for the job retention policy
 	jobRetentionTicker := time.NewTicker(time.Duration(max(svc.conf.Jobs.RetentionPolicy.Interval, 60)) * time.Second)
@@ -1411,23 +1407,26 @@ func (svc *Service) Run() error {
 		Topic:   "",
 	}
 
+	// note: calling methods on the service should be done in a goroutine
+	// to avoid blocking the main goroutine,
+	// specially to be able to process channel events (svc.notifChanBP)
 	for {
 		select {
 		case <-pendingJobsTicker.C:
-			svc.TryEnqueuePendingJobs()
+			go svc.TryEnqueuePendingJobs()
 		case <-jobRetryTicker.C:
-			svc.AttemptJobRetries()
-		case <-watchdogTicker.C:
-			svc.Watchdog()
+			go svc.AttemptJobRetries()
+		case <-jobVisibilityTicket.C:
+			go svc.CheckJobsVisibility()
 		case <-jobRetentionTicker.C:
-			_ = svc.CheckJobsRetention()
+			go svc.CheckJobsRetention()
 		case <-svc.stopChan:
 			// Channel was closed, time to stop
 			// received a signal to stop the service
 			// stop the tickers
 			pendingJobsTicker.Stop()
 			jobRetryTicker.Stop()
-			watchdogTicker.Stop()
+			jobVisibilityTicket.Stop()
 			jobRetentionTicker.Stop()
 			// stop and wait for the job backend provider to end (synchronous)
 			_ = svc.bp.Stop()
@@ -1448,7 +1447,7 @@ func (svc *Service) Run() error {
 				// stop the tickers
 				pendingJobsTicker.Stop()
 				jobRetryTicker.Stop()
-				watchdogTicker.Stop()
+				jobVisibilityTicket.Stop()
 				jobRetentionTicker.Stop()
 				// stop and wait for the job backend provider to end (synchronous)
 				_ = svc.bp.Stop()

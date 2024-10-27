@@ -35,8 +35,6 @@ const (
 	ServiceEventJobHealthcheck
 	// ServiceEventJobMetrics is an event that is sent when the metrics are computed
 	ServiceEventJobMetrics
-	// ServiceEventJobWatchdog is an event that is sent when the watchdog is called
-	ServiceEventJobWatchdog
 	// ServiceEventReady is an event that is sent when the service is ready
 	ServiceEventReady
 	// ServiceEventShutdown is an event that is sent when the service is shutdown
@@ -108,7 +106,7 @@ type IService interface {
 	GetMetrics() *ServiceMetrics
 	GetJobsTopics() []string
 	TryEnqueuePendingJobs()
-	Watchdog()
+	CheckJobsVisibility()
 	GetServiceEventChan() chan ServiceEvent
 	GetLogger() *zap.Logger
 }
@@ -116,23 +114,23 @@ type IService interface {
 func (t ServiceEventType) String() string {
 	switch t {
 	case ServiceEventJobCreated:
-		return "JobCreated"
+		return "Created"
 	case ServiceEventJobEnqueued:
-		return "JobEnqueued"
+		return "Enqueued"
 	case ServiceEventJobStarted:
-		return "JobStarted"
+		return "Started"
 	case ServiceEventJobSucceeded:
-		return "JobSucceeded"
+		return "Succeeded"
 	case ServiceEventJobCanceled:
-		return "JobCanceled"
+		return "Canceled"
 	case ServiceEventJobFailed:
-		return "JobFailed"
+		return "Failed"
 	case ServiceEventJobDeleted:
-		return "JobDeleted"
+		return "Deleted"
 	case ServiceEventJobTimeout:
-		return "JobTimeout"
+		return "Timeout"
 	case ServiceEventJobTerminated:
-		return "JobTerminated"
+		return "Terminated"
 	default:
 		return "other"
 	}
