@@ -46,6 +46,10 @@ type Service struct {
 func (svc *Service) Init() error {
 	var err error
 
+	svc.running.Store(false)
+	svc.checkJobsRetentionRunning.Store(false)
+	svc.checkJobsVisibilityRunning.Store(false)
+
 	if err = svc.bp.Init(svc.notifChanBP); err != nil {
 		return err
 	}
