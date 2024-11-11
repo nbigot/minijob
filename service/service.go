@@ -24,23 +24,24 @@ import (
 
 type Service struct {
 	// implements IService interface
-	jobs                       job.JobMap                             // hashmap of jobs
-	pendingJobs                job.JobMap                             // hashmap of pending jobs
-	pqRetryJobs                pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
-	lockedResources            job.LockedResources                    // map of locked resources
-	mu                         sync.Mutex                             // to ensure safe concurrent manipulation of jobs
-	mapMutex                   sync.RWMutex                           // mutex to protect hashmap of jobs
-	checkJobsRetentionRunning  atomic.Value                           // atomic value to track if the check jobs retention is running
-	checkJobsVisibilityRunning atomic.Value                           // atomic value to track if the check jobs visibility is running
-	notifChanBP                chan jobbackendprovider.Event          // notification channel for job backend provider
-	notifChanMetrics           chan ServiceEvent                      // notification channel for metrics
-	metrics                    ServiceMetrics                         // metrics
-	wg                         sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
-	stopChan                   chan struct{}                          // stopChan is a channel to stop the Run function
-	running                    atomic.Bool                            // Add this to track if the service is running
-	bp                         jobbackendprovider.IJobBackendProvider // backend provider
-	conf                       *config.Config                         // configuration
-	logger                     *zap.Logger                            // logger
+	jobs                        job.JobMap                             // hashmap of jobs
+	pendingJobs                 job.JobMap                             // hashmap of pending jobs
+	pqRetryJobs                 pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
+	lockedResources             job.LockedResources                    // map of locked resources
+	mu                          sync.Mutex                             // to ensure safe concurrent manipulation of jobs
+	mapMutex                    sync.RWMutex                           // mutex to protect hashmap of jobs
+	checkJobsRetentionRunning   atomic.Value                           // atomic value to track if the check jobs retention is running
+	checkJobsVisibilityRunning  atomic.Value                           // atomic value to track if the check jobs visibility is running
+	notifChanBP                 chan jobbackendprovider.Event          // notification channel for job backend provider
+	notifChanMetrics            chan ServiceEvent                      // notification channel for metrics
+	notifyTryEnqueuePendingJobs chan struct{}                          // channel to notify the TryEnqueuePendingJobs function
+	metrics                     ServiceMetrics                         // metrics
+	wg                          sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
+	stopChan                    chan struct{}                          // stopChan is a channel to stop the Run function
+	running                     atomic.Bool                            // Add this to track if the service is running
+	bp                          jobbackendprovider.IJobBackendProvider // backend provider
+	conf                        *config.Config                         // configuration
+	logger                      *zap.Logger                            // logger
 }
 
 func (svc *Service) Init() error {
@@ -311,6 +312,7 @@ func (svc *Service) RetryJob(j *job.Job) error {
 				Type:    ServiceEventJobEnqueued,
 				Metrics: &svc.metrics,
 				JobUUID: j.JobUUID,
+				Topic:   j.Topic,
 			}
 		}
 	}
@@ -384,6 +386,7 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 			Type:    ServiceEventJobEnqueued,
 			Metrics: &svc.metrics,
 			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
 		}
 	}
 
@@ -571,6 +574,15 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 		res.Jobs = append(res.Jobs, j)
 	}
 
+	if len(res.Jobs) == 0 {
+		return nil, &apierror.APIError{
+			Message:  "no job found that is ready or matches the criteria",
+			Code:     constants.ErrorCantPullAnyJob,
+			HttpCode: fiber.StatusNotFound,
+			JobUUID:  job.JobUUID{},
+		}
+	}
+
 	return res, nil
 }
 
@@ -716,6 +728,9 @@ func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 		return &apiErr
 	}
 
+	// Remove the job from the pending jobs
+	delete(svc.pendingJobs, j.JobUUID)
+
 	// start the job (add a history event)
 	j.AddHistoryEvent(job.JobEventStart, time.Now().UnixMilli())
 
@@ -734,6 +749,7 @@ func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 			Type:    ServiceEventJobStarted,
 			Metrics: &svc.metrics,
 			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
 		}
 	}
 
@@ -843,6 +859,7 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 			Type:    ServiceEventJobSucceeded,
 			Metrics: &svc.metrics,
 			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
 		}
 	}
 
@@ -855,8 +872,7 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 		)
 	}
 
-	svc.TryEnqueuePendingJobs()
-
+	svc.notifyTryEnqueuePendingJobs <- struct{}{}
 	return nil
 }
 
@@ -922,6 +938,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 			Type:    ServiceEventJobCanceled,
 			Metrics: &svc.metrics,
 			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
 		}
 	}
 
@@ -950,6 +967,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 			Type:    ServiceEventJobEnqueued,
 			Metrics: &svc.metrics,
 			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
 		}
 	}
 
@@ -962,8 +980,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 		)
 	}
 
-	svc.TryEnqueuePendingJobs()
-
+	svc.notifyTryEnqueuePendingJobs <- struct{}{}
 	return nil
 }
 
@@ -1029,6 +1046,7 @@ func (svc *Service) FailJob(jobUUID job.JobUUID) error {
 			Type:    ServiceEventJobFailed,
 			Metrics: &svc.metrics,
 			JobUUID: j.JobUUID,
+			Topic:   j.Topic,
 		}
 	}
 
@@ -1061,6 +1079,7 @@ func (svc *Service) FailJob(jobUUID job.JobUUID) error {
 				Type:    ServiceEventJobTerminated,
 				Metrics: &svc.metrics,
 				JobUUID: j.JobUUID,
+				Topic:   j.Topic,
 			}
 		}
 
@@ -1074,7 +1093,7 @@ func (svc *Service) FailJob(jobUUID job.JobUUID) error {
 			)
 		}
 
-		svc.TryEnqueuePendingJobs()
+		svc.notifyTryEnqueuePendingJobs <- struct{}{}
 		return nil
 	}
 
@@ -1335,7 +1354,6 @@ func (svc *Service) CheckJobsVisibility() {
 	defer svc.checkJobsVisibilityRunning.Store(false)
 
 	svc.mu.Lock()
-	defer svc.mu.Unlock()
 
 	// Create a list of jobs that have been running for too long
 	svc.mapMutex.RLock()
@@ -1353,6 +1371,8 @@ func (svc *Service) CheckJobsVisibility() {
 	}
 	svc.mapMutex.RUnlock()
 
+	svc.mu.Unlock()
+
 	for _, j := range runningForTooLongJobs {
 		svc.logger.Info(
 			"Job is running for too long",
@@ -1360,6 +1380,10 @@ func (svc *Service) CheckJobsVisibility() {
 			zap.String("JobUUID", string(j.JobUUID.String())),
 		)
 		_ = svc.FailJob(j.JobUUID)
+	}
+
+	if len(runningForTooLongJobs) > 0 {
+		svc.notifyTryEnqueuePendingJobs <- struct{}{}
 	}
 }
 
@@ -1416,8 +1440,10 @@ func (svc *Service) Run() error {
 	// specially to be able to process channel events (svc.notifChanBP)
 	for {
 		select {
-		case <-pendingJobsTicker.C:
+		case <-svc.notifyTryEnqueuePendingJobs:
 			go svc.TryEnqueuePendingJobs()
+		case <-pendingJobsTicker.C:
+			svc.notifyTryEnqueuePendingJobs <- struct{}{}
 		case <-jobRetryTicker.C:
 			go svc.AttemptJobRetries()
 		case <-jobVisibilityTicket.C:
@@ -1477,15 +1503,16 @@ func NewService(logger *zap.Logger, conf *config.Config) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		logger:           logger,
-		conf:             conf,
-		bp:               bp,
-		jobs:             make(job.JobMap),
-		pendingJobs:      make(job.JobMap),
-		notifChanBP:      make(chan jobbackendprovider.Event, 1000),
-		notifChanMetrics: make(chan ServiceEvent, 1000),
-		stopChan:         make(chan struct{}),
-		metrics:          NewSericeMetrics(),
+		logger:                      logger,
+		conf:                        conf,
+		bp:                          bp,
+		jobs:                        make(job.JobMap),
+		pendingJobs:                 make(job.JobMap),
+		notifChanBP:                 make(chan jobbackendprovider.Event, 1000),
+		notifChanMetrics:            make(chan ServiceEvent, 1000),
+		notifyTryEnqueuePendingJobs: make(chan struct{}, 1000),
+		stopChan:                    make(chan struct{}),
+		metrics:                     NewSericeMetrics(),
 	}, nil
 }
 
