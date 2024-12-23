@@ -93,8 +93,8 @@ type Config struct {
 			Enable bool   `yaml:"enable"` // Enable JSON schema validation
 			Path   string `yaml:"path"`   // Path to JSON schema file
 		} `yaml:"jsonSchema"`
-		DefaultVisibilityTimeout uint `json:"defaultVisibilityTimeout"` // Default duration (in seconds) to keep the job hidden from the queue after it is fetched.
-		MaxVisibilityTimeout     uint `json:"maxVisibilityTimeout"`     // Maximum duration (in seconds) to keep the job hidden from the queue after it is fetched.
+		DefaultVisibilityTimeout uint `yaml:"defaultVisibilityTimeout"` // Default duration (in seconds) to keep the job hidden from the queue after it is fetched.
+		MaxVisibilityTimeout     uint `yaml:"maxVisibilityTimeout"`     // Maximum duration (in seconds) to keep the job hidden from the queue after it is fetched.
 		RetentionPolicy          struct {
 			Enable    bool `yaml:"enable"`    // Enable retention policy
 			Interval  int  `yaml:"interval"`  // Interval in seconds to check for expired jobs

@@ -31,22 +31,22 @@ type BackoffStrategy struct {
 	//   retry = 2 => backoff = 1 * (2 ^ 1) = 2
 	//   retry = 3 => backoff = 1 * (2 ^ 2) = 4
 	//
-	Type        BackoffStrategyType `yaml:"type"`        // Type of backoff strategy
-	Base        uint                `yaml:"base"`        // Base time between each retry
-	Factor      uint                `yaml:"factor"`      // Factor to increase the time between each retry
-	MaxDuration uint                `yaml:"maxDuration"` // Maximum duration between each retry
+	Type        BackoffStrategyType `yaml:"type"`                        // Type of backoff strategy
+	Base        uint                `yaml:"base" example:"1000"`         // Base time between each retry (in milliseconds)
+	Factor      float64             `yaml:"factor" example:"2.0"`        // Factor to increase the time between each retry
+	MaxDuration uint                `yaml:"maxDuration" example:"60000"` // Maximum duration between each retry (in milliseconds)
 }
 
 // ComputeDelay calculates the delay before the next retry based on the count of failures and the backoff strategy
 func (bs *BackoffStrategy) ComputeDelay(countFailures uint) time.Duration {
 	switch bs.Type {
 	case Constant:
-		return time.Duration(bs.Base) * time.Second
+		return time.Duration(bs.Base) * time.Millisecond
 	case Linear:
-		return time.Duration(countFailures*bs.Base) * time.Second
+		return time.Duration(min(bs.MaxDuration, countFailures*bs.Base)) * time.Millisecond
 	case Exponential:
-		return time.Duration(math.Pow(2, float64(countFailures))) * time.Second
+		return time.Duration(min(float64(bs.MaxDuration), float64(bs.Base)*math.Pow(bs.Factor, float64(countFailures)))) * time.Millisecond
 	default:
-		return 0 * time.Second
+		return 0 * time.Millisecond
 	}
 }

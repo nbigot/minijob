@@ -94,9 +94,9 @@ func (w *WebAPIServer) DeleteAllJobs(c *fiber.Ctx) error {
 func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetJob")
 
-	jobUUID, err1 := w.GetJobUUIDFromParameter(c)
-	if err1 != nil {
-		return c.Status(err1.HttpCode).JSON(err1)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
+	if errApi != nil {
+		return c.Status(errApi.HttpCode).JSON(errApi)
 	}
 	job, err := w.service.GetJob(jobUUID)
 	if err != nil {
@@ -232,7 +232,7 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 func (w *WebAPIServer) DeleteJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "DeleteJob")
 
-	jobUUID, errApi := w.GetJobUUIDFromParameter(c)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
 	if errApi != nil {
 		return errApi.HTTPResponse(c)
 	}
@@ -272,7 +272,7 @@ func (w *WebAPIServer) DeleteJob(c *fiber.Ctx) error {
 func (w *WebAPIServer) CloneJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CloneJob")
 
-	jobUUID, errApi := w.GetJobUUIDFromParameter(c)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
 	if errApi != nil {
 		return errApi.HTTPResponse(c)
 	}
@@ -348,19 +348,19 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 
 	// numJobs of jobs to pull at once (default 1)
 	var numJobs uint
-	if numJobs, apiErr = w.GetUintParameterFromQuery(c, constants.NumJobsQueryParam, 1, 1, 100); apiErr != nil {
+	if numJobs, apiErr = GetUintParameterFromQuery(c, constants.NumJobsQueryParam, 1, 1, 100); apiErr != nil {
 		return nil, apiErr
 	}
 
 	// visibilityTimeout parameter to hide the job for a specific duration
 	var visibilityTimeout uint
-	if visibilityTimeout, apiErr = w.GetUintParameterFromQuery(c, constants.VisibilityTimeoutQueryParam, w.appConfig.Jobs.DefaultVisibilityTimeout, 1, w.appConfig.Jobs.MaxVisibilityTimeout); apiErr != nil {
+	if visibilityTimeout, apiErr = GetUintParameterFromQuery(c, constants.VisibilityTimeoutQueryParam, w.appConfig.Jobs.DefaultVisibilityTimeout, 1, w.appConfig.Jobs.MaxVisibilityTimeout); apiErr != nil {
 		return nil, apiErr
 	}
 
 	// waitTimeSeconds parameter enables long-poll (default 0)
 	var waitTimeSeconds uint
-	if waitTimeSeconds, apiErr = w.GetUintParameterFromQuery(c, constants.WaitTimeSecondsQueryParam, 0, 0, 60); apiErr != nil {
+	if waitTimeSeconds, apiErr = GetUintParameterFromQuery(c, constants.WaitTimeSecondsQueryParam, 0, 0, 60); apiErr != nil {
 		return nil, apiErr
 	}
 
@@ -368,7 +368,7 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 	topic := c.Query("topic")
 
 	// job uuid to pull (if empty pull any job)
-	jobUUID, errApi := w.GetJobUUIDFromQuery(c)
+	jobUUID, errApi := GetJobUUIDFromQuery(c)
 	if errApi != nil {
 		return nil, errApi
 	}
@@ -399,7 +399,7 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 func (w *WebAPIServer) CancelJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CancelJob")
 
-	jobUUID, errApi := w.GetJobUUIDFromParameter(c)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
 	if errApi != nil {
 		return errApi.HTTPResponse(c)
 	}
@@ -439,7 +439,7 @@ func (w *WebAPIServer) CancelJob(c *fiber.Ctx) error {
 func (w *WebAPIServer) SetJobAsSuccessful(c *fiber.Ctx) error {
 	c.Locals("metricName", "SetJobAsSuccessful")
 
-	jobUUID, errApi := w.GetJobUUIDFromParameter(c)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
 	if errApi != nil {
 		return errApi.HTTPResponse(c)
 	}
@@ -479,7 +479,7 @@ func (w *WebAPIServer) SetJobAsSuccessful(c *fiber.Ctx) error {
 func (w *WebAPIServer) FailJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "FailJob")
 
-	jobUUID, errApi := w.GetJobUUIDFromParameter(c)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
 	if errApi != nil {
 		return errApi.HTTPResponse(c)
 	}
@@ -519,7 +519,7 @@ func (w *WebAPIServer) FailJob(c *fiber.Ctx) error {
 func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "ChangeVisibilityTimeoutJob")
 
-	jobUUID, errApi := w.GetJobUUIDFromParameter(c)
+	jobUUID, errApi := GetJobUUIDFromParameter(c)
 	if errApi != nil {
 		return errApi.HTTPResponse(c)
 	}
@@ -527,7 +527,7 @@ func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 	// visibilityTimeout parameter to hide the job for a specific duration
 	var apiErr *apierror.APIError
 	var visibilityTimeout uint
-	if visibilityTimeout, apiErr = w.GetUintParameterFromQuery(c, constants.VisibilityTimeoutQueryParam, w.appConfig.Jobs.DefaultVisibilityTimeout, 1, w.appConfig.Jobs.MaxVisibilityTimeout); apiErr != nil {
+	if visibilityTimeout, apiErr = GetUintParameterFromQuery(c, constants.VisibilityTimeoutQueryParam, w.appConfig.Jobs.DefaultVisibilityTimeout, 1, w.appConfig.Jobs.MaxVisibilityTimeout); apiErr != nil {
 		return apiErr.HTTPResponse(c)
 	}
 
@@ -604,7 +604,7 @@ func (w *WebAPIServer) GetJobsMetrics(c *fiber.Ctx) error {
 	result := JSONResultGetJobsMetrics{
 		Code:    fiber.StatusOK,
 		Message: "success",
-		Metrics: w.service.GetMetrics(),
+		Metrics: w.service.GetMetrics().(*service.ServiceMetrics),
 	}
 
 	// return the metrics as json

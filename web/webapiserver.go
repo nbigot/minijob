@@ -33,7 +33,7 @@ func (w *WebAPIServer) AddPrometheus(app *fiber.App, notifChan chan service.Serv
 	// if w.appConfig.WebServer.Metrics.Enable {
 	// }
 	w.metrics = metrics.NewMetrics()
-	w.metrics.Init(app, notifChan)
+	w.metrics.Init(app, notifChan, w.service.GetMetrics())
 }
 
 func (w *WebAPIServer) AddRoutes(app *fiber.App) {

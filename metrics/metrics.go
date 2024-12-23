@@ -18,12 +18,13 @@ type Metrics struct {
 	ConstLabels        prometheus.Labels
 	Registry           *prometheus.Registry
 	FiberPrometheus    *fiberprometheus.FiberPrometheus
+	serviceMetrics     service.IServiceMetrics
 	notifChan          chan service.ServiceEvent
 	wg                 sync.WaitGroup
 }
 
-func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
-	// Create non-global registry.
+func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent, serviceMetrics service.IServiceMetrics) {
+	// Create non-global registry
 	m.Registry = prometheus.NewRegistry()
 	namespace := ""
 	subsystem := ""
@@ -65,6 +66,7 @@ func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
 		labelNames,
 	)
 
+	m.serviceMetrics = serviceMetrics
 	m.notifChan = notifChan
 
 	m.FiberPrometheus = fiberprometheus.NewWithRegistry(m.Registry, "minijob", "http", "", m.ConstLabels, fiberprometheus.DefaultBuckets)
@@ -76,16 +78,17 @@ func (m *Metrics) Init(app *fiber.App, notifChan chan service.ServiceEvent) {
 }
 
 func (m *Metrics) InitCustomMetrics(e service.ServiceEvent) {
-	m.JobDurationSeconds.WithLabelValues("").Observe(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobCreated.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobEnqueued.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobStarted.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobSucceeded.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobCanceled.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobFailed.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobDeleted.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobTimeout.String(), "").Add(0)
-	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobTerminated.String(), "").Add(0)
+	topic := ""
+	m.JobDurationSeconds.WithLabelValues(topic).Observe(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobCreated.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobEnqueued.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobStarted.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobSucceeded.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobCanceled.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobFailed.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobDeleted.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobTimeout.String(), topic).Add(0)
+	m.JobsEventsCounter.WithLabelValues(service.ServiceEventJobTerminated.String(), topic).Add(0)
 	m.SetGauges(e)
 }
 
@@ -95,7 +98,7 @@ func (m *Metrics) Shutdown() {
 }
 
 func (m *Metrics) SetGauges(e service.ServiceEvent) {
-	topicMetric := e.Metrics.JobMetricsByTopicMap[e.Topic]
+	topicMetric := m.serviceMetrics.GetMetricByTopic(e.Topic)
 	m.JobsCounterGauge.WithLabelValues(e.Topic).Set(float64(topicMetric.JobsCounter))
 	m.JobsStatusGauge.WithLabelValues("Created", e.Topic).Set(float64(topicMetric.JobsCounterCreated))
 	m.JobsStatusGauge.WithLabelValues("Pending", e.Topic).Set(float64(topicMetric.JobsCounterPending))
@@ -107,7 +110,6 @@ func (m *Metrics) SetGauges(e service.ServiceEvent) {
 	m.JobsStatusGauge.WithLabelValues("Timeout", e.Topic).Set(float64(topicMetric.JobsCounterTimeout))
 	m.JobsStatusGauge.WithLabelValues("Deleted", e.Topic).Set(float64(topicMetric.JobsCounterDeleted))
 	m.JobsStatusGauge.WithLabelValues("Canceled", e.Topic).Set(float64(topicMetric.JobsCounterCanceled))
-	m.JobsStatusGauge.WithLabelValues("Faillure", e.Topic).Set(float64(topicMetric.JobsCounterFaillure))
 }
 
 func (m *Metrics) Run() {

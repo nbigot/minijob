@@ -65,6 +65,11 @@ func (s *DBFileStorage) Load() (job.JobMap, error) {
 		return nil, err
 	}
 
+	// recompute states of jobs
+	for _, j := range data.Jobs {
+		j.SetStateFromHistory()
+	}
+
 	return data.Jobs, nil
 }
 

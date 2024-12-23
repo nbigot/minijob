@@ -2,7 +2,6 @@ package job
 
 import (
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -28,18 +27,21 @@ const (
 	JobEventFail      = "FAIL"      // failure (might be retried, depending on the retry policy) (only occurs after a start or retry event)
 	JobEventRetry     = "RETRY"     // retry of a failed job (only occurs after a fail event)
 	JobEventTerminate = "TERMINATE" // definitive failure, when no more retries are possible (final state) (only occurs after a fail event)
+	JobEventDelete    = "DELETE"    // event type for the deletion of a job
 )
 
 // JobState describes the state of a job, it depends on the job history
 type JobState int
 
 const (
-	JobPending   JobState = iota // JobPending is the initial state of a job
+	JobNoState   JobState = iota // NoState is a special state when no state is found
+	JobPending                   // JobPending is the initial state of a job
 	JobQueued                    // JobQueued is the state of a job when it is ready to start
 	JobRunning                   // JobRunning is the state of a job when it is running
 	JobSucceeded                 // JobSucceeded is the state of a job when it is completed successfully
 	JobFailed                    // JobFailed is the state of a job when it definitively failed (no more possible retries)
 	JobCanceled                  // JobCanceled is the state of a job when it is canceled
+	JobDeleted                   // JobDeleted is the state of a job when it is deleted
 )
 
 type JobHistoryEvent struct {
@@ -64,26 +66,10 @@ type Job struct {
 	DebugMode         bool          `json:"debugMode"`         // The debug flag of the job (optional)
 	VisibilityTimeout uint          `json:"visibilityTimeout"` // Duration (in seconds) to keep the job hidden from the queue after it is fetched
 	StartAfter        int64         `json:"startAfter"`        // Timestamp (in milliseconds) to start the job after
+	state             JobState      // The state of the job
 }
 
 type JobMap = map[JobUUID]*Job
-
-// // JobMeta is the metadata of a job
-// type JobMeta struct {
-// 	Topic         string       `json:"topic"`
-// 	CreationDate  int64        `json:"creationDate"`
-// 	LockResources ResourceList `json:"lockResources"`
-// 	UserAgent     string       `json:"userAgent"`
-// 	Requester     string       `json:"requester"`
-// 	SessionId     string       `json:"sessionId"`
-// 	TraceId       string       `json:"traceId"`
-// 	DebugMode     bool         `json:"debugMode"`
-// }
-
-// type JobPayload struct {
-// 	Meta       JobMeta           `json:"meta" validate:"required"`
-// 	Properties map[string]string `json:"properties" validate:"required,lte=128,dive,keys,gt=0,lte=64,endkeys,max=1024,required"`
-// }
 
 // JobRequest is the request to create a job, it is used to create a job from a http request
 type JobRequest struct {
@@ -99,67 +85,6 @@ type JobRequest struct {
 	DebugMode     bool          `json:"debugMode"`                      // DebugMode is the debug flag of the job (optional)
 	StartAfter    int64         `json:"startAfter"`                     // Timestamp (in milliseconds) to start the job after
 	Delay         int64         `json:"delay"`                          // Delay (in seconds) to wait before starting the job
-	// TODO
-	/*
-		partitionId: string;  // The partition identifier for the job to be assigned
-		priority: number;
-		deadline: number;
-		cron: string;
-		maxAttempts: number;
-		maxDuration: number;
-
-		// Retention policy
-		retentionPolicy: {
-
-			// The duration to keep the job in the backend
-			duration: number;
-
-			// The maximum number of jobs to keep in the backend
-			maxJobs: number;
-
-			// The maximum number of jobs to keep per topic
-			maxJobsPerTopic: number;
-
-			// The maximum number of jobs to keep per requester
-			maxJobsPerRequester: number;
-
-			// The maximum number of jobs to keep per session
-			maxJobsPerSession: number;
-
-			// The maximum number of jobs to keep per trace
-			maxJobsPerTrace: number;
-
-			// The maximum number of jobs to keep per user agent
-			maxJobsPerUserAgent: number;
-
-			// The maximum number of jobs to keep per lock resource
-			maxJobsPerLockResource: number;
-		}
-
-		// Retry policy
-		retryPolicy: {
-
-			// The number of attempts to make before giving up
-			maxAttempts: number;
-
-			// The delay between each attempt
-			delay: number;
-
-			// The backoff factor to apply between each attempt
-			backoff: number;
-
-			// The maximum delay between each attempt
-			maxDelay: number;
-
-			// The maximum duration of the retry policy
-			maxDuration: number;
-
-			// The jitter factor to apply to the delay
-			jitter: number;
-
-			// The retry strategy
-			strategy: 'fixed' | 'linear' | 'exponential';
-	*/
 }
 
 func (j Job) ToJSON() (string, error) {
@@ -191,38 +116,56 @@ func (j *Job) GetLastUpdateDate() int64 {
 	return 0
 }
 
-// Get job state
-func (j *Job) GetState() (JobState, error) {
-	// the state is the last event in the history
-	if len(j.History) > 0 {
-		switch j.History[len(j.History)-1].EventType {
-		case JobEventCreate:
-			return JobPending, nil
-		case JobEventEnqueue:
-			return JobQueued, nil
-		case JobEventStart, JobEventFail, JobEventRetry:
-			return JobRunning, nil
-		case JobEventSuccess:
-			return JobSucceeded, nil
-		case JobEventCancel:
-			return JobCanceled, nil
-		case JobEventTerminate:
-			return JobFailed, nil
-		default:
-			return 0, errors.New("unknown state")
-		}
-	}
+func (j *Job) GetState() JobState {
+	return j.state
+}
 
-	return 0, errors.New("no state found")
+func (j *Job) GetPreviousState() JobState {
+	if len(j.History) > 1 {
+		// the state is the last event in the history
+		return j.GetStateFromEvent(j.History[len(j.History)-2].EventType)
+	}
+	return JobNoState
+}
+
+func (j *Job) SetStateFromHistory() {
+	state := j.ComputeStateFromHistory()
+	if state == JobNoState {
+		panic("no state found")
+	}
+	j.state = state
+}
+
+func (j *Job) ComputeStateFromHistory() JobState {
+	if len(j.History) > 0 {
+		// the state is the last event in the history
+		return j.GetStateFromEvent(j.History[len(j.History)-1].EventType)
+	}
+	return JobNoState
+}
+
+func (j *Job) GetStateFromEvent(eventType string) JobState {
+	switch eventType {
+	case JobEventCreate:
+		return JobPending
+	case JobEventEnqueue:
+		return JobQueued
+	case JobEventStart, JobEventFail, JobEventRetry:
+		return JobRunning
+	case JobEventSuccess:
+		return JobSucceeded
+	case JobEventCancel:
+		return JobCanceled
+	case JobEventTerminate:
+		return JobFailed
+	default:
+		return JobNoState
+	}
 }
 
 func (j *Job) IsCompleted() bool {
 	// Check if the job is completed
-	state, err := j.GetState()
-	if err != nil {
-		return false
-	}
-	switch state {
+	switch j.state {
 	case JobSucceeded, JobCanceled, JobFailed:
 		return true
 	default:
@@ -257,6 +200,7 @@ func (j *Job) Clone() *Job {
 		DebugMode:         j.DebugMode,
 		VisibilityTimeout: j.VisibilityTimeout,
 		StartAfter:        j.StartAfter,
+		state:             j.state,
 	}
 }
 
@@ -271,14 +215,20 @@ func (j *Job) AddHistoryEvent(eventType string, timestamp int64) {
 		EventType: eventType,
 		Timestamp: timestamp,
 	})
+	j.ComputeStateFromHistory()
+}
+
+func (j *Job) GetHistoryStates() []JobState {
+	// Get the list of states from the history
+	states := make([]JobState, 0)
+	for _, event := range j.History {
+		states = append(states, j.GetStateFromEvent(event.EventType))
+	}
+	return states
 }
 
 func (j *Job) GetCountLockResources() uint {
-	state, err := j.GetState()
-	if err != nil {
-		return 0
-	}
-	switch state {
+	switch j.state {
 	case JobQueued, JobRunning:
 		return uint(len(j.LockResources))
 	default:
@@ -298,6 +248,7 @@ func NewJob(payload []byte) (*Job, error) {
 			Err:      err,
 		}
 	}
+	j.ComputeStateFromHistory()
 	return j, nil
 }
 

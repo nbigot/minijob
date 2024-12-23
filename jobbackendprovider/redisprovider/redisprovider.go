@@ -146,6 +146,7 @@ func (p *RedisJobBackendProvider) LoadJobs() (job.JobMap, error) {
 			}
 		}
 
+		j.SetStateFromHistory()
 		jobMap[j.JobUUID] = j
 	}
 
