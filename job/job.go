@@ -215,7 +215,7 @@ func (j *Job) AddHistoryEvent(eventType string, timestamp int64) {
 		EventType: eventType,
 		Timestamp: timestamp,
 	})
-	j.ComputeStateFromHistory()
+	j.state = j.ComputeStateFromHistory()
 }
 
 func (j *Job) GetHistoryStates() []JobState {
@@ -289,6 +289,8 @@ func NewJobFromRequest(payload []byte) (*Job, error) {
 		DebugMode:     req.DebugMode,
 		StartAfter:    startAfter,
 	}
+
+	// note that the JobUUID and History will be set later
 
 	return j, nil
 }

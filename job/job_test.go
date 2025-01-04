@@ -2,9 +2,11 @@ package job
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestJob_UnmarshalJSON(t *testing.T) {
@@ -114,4 +116,149 @@ func TestJob_MarshalJSON(t *testing.T) {
 	if resultJSONstr != expectedJSON {
 		t.Errorf("Expected JSON: %s, got: %s", expectedJSON, resultJSONstr)
 	}
+}
+
+func TestJob_GetPreviousState(t *testing.T) {
+	tests := []struct {
+		name string
+		j    *Job
+		want JobState
+	}{
+		{
+			"Test case 1: no history (invalid)",
+			&Job{state: JobPending},
+			JobNoState,
+		},
+		{
+			"Test case 2: freshly created job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+				},
+			},
+			JobNoState,
+		},
+		{
+			"Test case 3: pending job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+					{EventType: JobEventEnqueue, Timestamp: 1735992487272},
+				},
+			},
+			JobPending,
+		},
+		{
+			"Test case 4: started job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+					{EventType: JobEventEnqueue, Timestamp: 1735992487272},
+					{EventType: JobEventStart, Timestamp: 1735992487274},
+				},
+			},
+			JobQueued,
+		},
+		{
+			"Test case 4: succeeded job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+					{EventType: JobEventEnqueue, Timestamp: 1735992487272},
+					{EventType: JobEventStart, Timestamp: 1735992487274},
+					{EventType: JobEventSuccess, Timestamp: 1735992487276},
+				},
+			},
+			JobRunning,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.j.GetPreviousState(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Job.GetPreviousState() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJob_ComputeStateFromHistory(t *testing.T) {
+	tests := []struct {
+		name string
+		j    *Job
+		want JobState
+	}{
+		{
+			"Test case 1: no history (invalid)",
+			&Job{state: JobPending},
+			JobNoState,
+		},
+		{
+			"Test case 2: freshly created job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+				},
+			},
+			JobPending,
+		},
+		{
+			"Test case 3: pending job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+					{EventType: JobEventEnqueue, Timestamp: 1735992487272},
+				},
+			},
+			JobQueued,
+		},
+		{
+			"Test case 4: started job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+					{EventType: JobEventEnqueue, Timestamp: 1735992487272},
+					{EventType: JobEventStart, Timestamp: 1735992487274},
+				},
+			},
+			JobRunning,
+		},
+		{
+			"Test case 4: succeeded job",
+			&Job{
+				state: JobPending,
+				History: []JobHistoryEvent{
+					{EventType: JobEventCreate, Timestamp: 1735992487270},
+					{EventType: JobEventEnqueue, Timestamp: 1735992487272},
+					{EventType: JobEventStart, Timestamp: 1735992487274},
+					{EventType: JobEventSuccess, Timestamp: 1735992487276},
+				},
+			},
+			JobSucceeded,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.j.ComputeStateFromHistory(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Job.ComputeStateFromHistory() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJob_Init(t *testing.T) {
+	j := Job{}
+	jobUUID := uuid.MustParse("0190e951-c29a-70aa-ba59-18be4abe9700")
+	j.Init(JobUUID(jobUUID), 1735992487270)
+	assert.Equal(t, jobUUID, j.JobUUID)
+	assert.Equal(t, 1, len(j.History))
+	assert.Equal(t, JobEventCreate, j.History[0].EventType)
+	assert.Equal(t, JobPending, j.state)
+	assert.Equal(t, j.ComputeStateFromHistory(), j.state)
 }
