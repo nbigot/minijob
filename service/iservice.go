@@ -32,11 +32,11 @@ type IService interface {
 	CloneJob(job.JobUUID) (*job.Job, error)
 	CancelJob(job.JobUUID) error
 	SetJobAsSuccessful(job.JobUUID) error
-	FailJob(job.JobUUID) error
+	FailJob(job.JobUUID) (reachedMaxRetry bool, err error)
 	DeleteJob(job.JobUUID) error
 	DeleteAllJobs() error
 	GenerateNewJobUuid() (job.JobUUID, error)
-	GetLockedResources() (job.LockedResources, error)
+	GetLockedResources() job.LockedResources
 	UnlockAllResources() error
 	ChangeVisibilityTimeoutJob(job.JobUUID, uint) error
 	Healthcheck() bool

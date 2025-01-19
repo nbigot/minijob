@@ -365,7 +365,7 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 	}
 
 	// topic to pull the job from (if empty pull from any topic)
-	topic := c.Query("topic")
+	topic := c.Query(constants.JobTopicParam)
 
 	// job uuid to pull (if empty pull any job)
 	jobUUID, errApi := GetJobUUIDFromQuery(c)
@@ -484,7 +484,7 @@ func (w *WebAPIServer) FailJob(c *fiber.Ctx) error {
 		return errApi.HTTPResponse(c)
 	}
 
-	err := w.service.FailJob(jobUUID)
+	reachedMaxRetry, err := w.service.FailJob(jobUUID)
 	if err != nil {
 		// check if type of err is apierror.APIError
 		if _, ok := err.(*apierror.APIError); ok {
@@ -498,6 +498,15 @@ func (w *WebAPIServer) FailJob(c *fiber.Ctx) error {
 			Err:      err,
 		}
 		return apiErr.HTTPResponse(c)
+	}
+
+	if reachedMaxRetry {
+		return c.JSON(
+			JSONResultSuccess{
+				Code:    fiber.StatusOK,
+				Message: "job reached max retry",
+			},
+		)
 	}
 
 	return c.JSON(

@@ -13,10 +13,7 @@ import "github.com/gofiber/fiber/v2"
 func (w *WebAPIServer) GetLockedResources(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetLockedResources")
 
-	lockedResources, err := w.service.GetLockedResources()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(err)
-	}
+	lockedResources := w.service.GetLockedResources()
 	return c.JSON(
 		JSONResultGetLockedResources{
 			Code:      fiber.StatusOK,

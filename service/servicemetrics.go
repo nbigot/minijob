@@ -1,6 +1,8 @@
 package service
 
 import (
+	"sync"
+
 	"github.com/nbigot/minijob/job"
 )
 
@@ -31,7 +33,8 @@ type JobMetrics struct {
 
 type ServiceMetrics struct {
 	// implements IServiceMetrics interface
-	JobMetricsByTopicMap map[string]*JobMetrics `json:"jobsTopics"` // metrics by topic
+	JobMetricsByTopicMap sync.Map `json:"jobsTopics"` // metrics by topic ([string]*JobMetrics)
+	topics               []string // list of topics (cache)
 }
 
 func (s *ServiceMetrics) Init() error {
@@ -102,32 +105,24 @@ func (s *ServiceMetrics) UpdateFromHistory(j *job.Job) {
 }
 
 func (s *ServiceMetrics) OnDeleteAllJobs() {
-	for _, jobMetrics := range s.JobMetricsByTopicMap {
+	s.JobMetricsByTopicMap.Range(func(key, value interface{}) bool {
+		jobMetrics := value.(*JobMetrics)
 		jobMetrics.JobsCounterDeleted += jobMetrics.JobsCounter
 		jobMetrics.JobsCounter = 0
 		jobMetrics.JobsCounterPending = 0
 		jobMetrics.JobsCounterQueued = 0
 		jobMetrics.JobsCounterRunning = 0
 		jobMetrics.ResourcesLockedCount = 0
-	}
+		return true
+	})
 }
 
 func (s *ServiceMetrics) GetJobsTopics() []string {
-	topics := make([]string, 0, len(s.JobMetricsByTopicMap))
-	for topic := range s.JobMetricsByTopicMap {
-		topics = append(topics, topic)
-	}
-
-	return topics
+	return s.topics
 }
 
 func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int) {
-	var jobMetrics *JobMetrics
-	var found bool
-	if jobMetrics, found = s.JobMetricsByTopicMap[topic]; !found {
-		jobMetrics = &JobMetrics{}
-		s.JobMetricsByTopicMap[topic] = jobMetrics
-	}
+	jobMetrics := s.GetMetricByTopic(topic)
 	if inc < 0 {
 		jobMetrics.ResourcesLockedCount -= uint(inc)
 	} else {
@@ -136,11 +131,17 @@ func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int)
 }
 
 func (s *ServiceMetrics) GetMetricByTopic(topic string) *JobMetrics {
-	jobMetrics, exists := s.JobMetricsByTopicMap[topic]
+	jobMetrics, exists := s.JobMetricsByTopicMap.Load(topic)
 	if !exists {
-		jobMetrics = &JobMetrics{}
-		s.JobMetricsByTopicMap[topic] = jobMetrics
+		return s.AddTopic(topic)
 	}
+	return jobMetrics.(*JobMetrics)
+}
+
+func (s *ServiceMetrics) AddTopic(topic string) *JobMetrics {
+	jobMetrics := &JobMetrics{}
+	s.JobMetricsByTopicMap.Store(topic, jobMetrics)
+	s.topics = append(s.topics, topic)
 	return jobMetrics
 }
 
@@ -148,6 +149,7 @@ func NewSericeMetrics() *ServiceMetrics {
 	m := make(map[string]*JobMetrics)
 	m[""] = &JobMetrics{}
 	return &ServiceMetrics{
-		JobMetricsByTopicMap: m,
+		JobMetricsByTopicMap: sync.Map{},
+		topics:               make([]string, 0),
 	}
 }

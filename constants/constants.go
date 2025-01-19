@@ -36,6 +36,7 @@ const ErrorStreamIteratorIsBusy = 1332
 const ErrorDatabaseUnavailable = 1440
 
 const JobUuidParam = "jobuuid"
+const JobTopicParam = "topic"
 const NumJobsQueryParam = "numjobs"
 const VisibilityTimeoutQueryParam = "visibilitytimeout"
 const WaitTimeSecondsQueryParam = "waittimeseconds"
