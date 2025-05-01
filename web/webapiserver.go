@@ -14,7 +14,7 @@ import (
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
 	_ "github.com/nbigot/minijob/docs"
-	"github.com/nbigot/minijob/metrics"
+	"github.com/nbigot/minijob/fiberprometheus"
 	"github.com/nbigot/minijob/service"
 )
 
@@ -25,15 +25,10 @@ type WebAPIServer struct {
 	app                *fiber.App
 	appConfig          *config.Config
 	schema             jsonschema.Schema
-	metrics            *metrics.Metrics
 }
 
-func (w *WebAPIServer) AddPrometheus(app *fiber.App, notifChan chan service.ServiceEvent) {
-	// TODO
-	// if w.appConfig.WebServer.Metrics.Enable {
-	// }
-	w.metrics = metrics.NewMetrics()
-	w.metrics.Init(app, notifChan, w.service.GetMetrics())
+func (w *WebAPIServer) GetFiberPrometheus() *fiberprometheus.FiberPrometheus {
+	return w.service.GetMetrics().GetFiberPrometheus()
 }
 
 func (w *WebAPIServer) AddRoutes(app *fiber.App) {
@@ -57,9 +52,11 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiJobs := api.Group("/jobs")
 	apiJobs.Get("/", w.GetAllJobs)
 	apiJobs.Get("/topics", w.GetJobsTopics)
-	apiJobs.Get("/metrics", w.GetJobsMetrics)
-	apiJobs.Get("/monitor", w.GetJobsMonitoring)
+	apiJobs.Get("/oldest", w.GetOldestJobs)
 	apiJobs.Delete("/", w.DeleteAllJobs)
+
+	apiObservability := api.Group("/observability")
+	apiObservability.Get("/metrics", w.GetJobsMetrics)
 
 	apiResources := api.Group("/resources")
 	apiResources.Get("/locked", w.GetLockedResources)
@@ -107,7 +104,6 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 func (w *WebAPIServer) ShutdownServer() {
 	_ = w.service.Stop()
-	w.metrics.Shutdown()
 	w.funcShutdownServer()
 }
 

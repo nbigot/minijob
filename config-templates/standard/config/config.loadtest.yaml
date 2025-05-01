@@ -66,6 +66,9 @@ webserver:
         address: "127.0.0.1:8080"
     swagger:
         enable: true
+eventsLogger:
+    enable: false
+    filepath: "events.log"
 logger:
     level: "info"
     development: false

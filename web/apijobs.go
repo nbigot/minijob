@@ -2,10 +2,13 @@ package web
 
 import (
 	"fmt"
+	"sort"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/utils"
 	"github.com/nbigot/minijob/constants"
+	"github.com/nbigot/minijob/metrics"
 	"github.com/nbigot/minijob/service"
 	"github.com/nbigot/minijob/web/apierror"
 )
@@ -21,21 +24,7 @@ import (
 func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetAllJobs")
 
-	jobs, err := w.service.GetAllJobs()
-	if err != nil {
-		// check if type of err is apierror.APIError
-		if _, ok := err.(*apierror.APIError); ok {
-			return err.(*apierror.APIError).HTTPResponse(c)
-		}
-		apiErr := apierror.APIError{
-			Message:  "cannot delete all jobs",
-			Code:     constants.ErrorCantDeleteJob,
-			HttpCode: fiber.StatusBadRequest,
-			Err:      err,
-		}
-		return apiErr.HTTPResponse(c)
-	}
-
+	jobs := w.service.GetAllJobs()
 	return c.JSON(
 		JSONResultGetAllJobs{
 			Code:    fiber.StatusOK,
@@ -147,9 +136,12 @@ func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 // @Summary Create job
 // @Description Create job
 // @ID job-create
+// @Accept json
 // @Produce json
 // @Tags Jobs
+// @Param request body job.JobRequest true "Job creation request"
 // @success 200 {object} web.JSONResultCreateJob{} "successful operation"
+// @Failure 400 {object} apierror.APIError "Invalid input - content type, JSON body format or validation errors"
 // @Router /api/v1/job/ [post]
 func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CreateJob")
@@ -564,56 +556,20 @@ func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 	)
 }
 
-// GetJobsMonitoring godoc
-// @Summary Monitor jobs
-// @Description Monitor jobs
-// @ID job-monitor
-// @Produce json
-// @Tags Jobs
-// @success 200 {object} web.JSONResultSuccess{} "successful operation"
-// @Router /api/v1/jobs/monitor [get]
-func (w *WebAPIServer) GetJobsMonitoring(c *fiber.Ctx) error {
-	c.Locals("metricName", "GetJobsMonitoring")
-
-	// display all jobs in an html table
-	// the table should have the following columns:
-	// - Job UUID
-	// - Job Name
-	// - Job Status
-	// - Job Start Time
-	// - Job End Time
-	// - Job Duration
-	// - Job Properties
-	// each row should have a button to delete the job
-	// each row should have a button to clone the job
-	// each row should have a button to view the job
-	// each row should have a button to view the job logs
-	// each row should have a button to view the job properties
-	// each cell should have a background color based on relevant information (status, duration, ...) (e.g. red for failed, green for success, yellow for running, etc.)
-	// the overall page should like an excel sheet
-	// TODO
-	return c.JSON(
-		JSONResultSuccess{
-			Code:    fiber.StatusOK,
-			Message: "success",
-		},
-	)
-}
-
 // GetJobsMetrics godoc
 // @Summary Get jobs metrics
 // @Description Get jobs metrics
 // @ID jobs-metrics
 // @Produce json
-// @Tags Jobs
+// @Tags Utils
 // @success 200 {object} web.JSONResultGetJobsMetrics{} "successful operation"
-// @Router /api/v1/jobs/metrics [get]
+// @Router /api/v1/observability/metrics [get]
 func (w *WebAPIServer) GetJobsMetrics(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetJobsMetrics")
 	result := JSONResultGetJobsMetrics{
 		Code:    fiber.StatusOK,
 		Message: "success",
-		Metrics: w.service.GetMetrics().(*service.ServiceMetrics),
+		Metrics: w.service.GetMetrics().(*metrics.ServiceMetrics).GetJobMetricsByTopicMap(),
 	}
 
 	// return the metrics as json
@@ -637,4 +593,75 @@ func (w *WebAPIServer) GetJobsTopics(c *fiber.Ctx) error {
 			Topics:  w.service.GetJobsTopics(),
 		},
 	)
+}
+
+// GetOldestJobs godoc
+// @Summary Get oldest incomplete jobs
+// @Description Get top N oldest jobs that are not completed, grouped by topic
+// @ID jobs-get-old
+// @Produce json
+// @Tags Jobs
+// @Param limit query int false "Number of jobs per topic (default 10, min 1, max 100)"
+// @Param duration query int false "Minimum job duration in seconds (default 0, max 1 year)"
+// @success 200 {object} web.JSONResultGetOldJobs{} "successful operation"
+// @Router /api/v1/jobs/old [get]
+func (w *WebAPIServer) GetOldestJobs(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetOldestJobs")
+
+	// Get limit parameter, default to 10 if not specified
+	limit, apiErr := GetUintParameterFromQuery(c, "limit", 10, 1, 100)
+	if apiErr != nil {
+		return apiErr.HTTPResponse(c)
+	}
+
+	// Get duration parameter, default to 0 if not specified (return all jobs)
+	minDuration, apiErr := GetUintParameterFromQuery(c, "duration", 0, 0, 86400*365)
+	if apiErr != nil {
+		return apiErr.HTTPResponse(c)
+	}
+	minDurationMs := int64(minDuration) * 1000
+
+	jobs := w.service.GetAllJobs()
+	topicJobs := make(TopicOldJobsMap)
+	now := time.Now().UnixMilli()
+
+	for _, job := range jobs {
+		if !job.IsCompleted() {
+			jobDurationMs := now - job.GetCreationTimestamp()
+
+			// Filter out jobs with duration less than minDuration
+			if jobDurationMs < minDurationMs {
+				continue
+			}
+
+			result := TopOldJobsResult{
+				JobUUID:    job.JobUUID.String(),
+				DurationMs: jobDurationMs,
+			}
+
+			topicJobs[job.Topic] = append(topicJobs[job.Topic], result)
+		}
+	}
+
+	// Sort and limit topicsResults for each topic
+	topicsResults := make(TopicOldJobsMap)
+	for topic, jobs := range topicJobs {
+		// Sort jobs by duration in descending order (oldest first)
+		sort.Slice(jobs, func(i, j int) bool {
+			return jobs[i].DurationMs > jobs[j].DurationMs
+		})
+
+		// Limit number of jobs per topic
+		if len(jobs) > int(limit) {
+			jobs = jobs[:limit]
+		}
+
+		topicsResults[topic] = jobs
+	}
+
+	return c.JSON(JSONResultGetOldJobs{
+		Code:    fiber.StatusOK,
+		Message: "success",
+		Topics:  topicsResults,
+	})
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nbigot/minijob/config"
+	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
 
@@ -15,7 +16,7 @@ import (
 )
 
 type InMemoryJobBackendProvider struct {
-	// implements IJobBackendProvider interface
+	// implements IJobBackendProvider & IServiceEventObserver interfaces
 	logger                  *zap.Logger                   // logger is the logger
 	logVerbosity            int                           // logVerbosity is the log verbosity level
 	mu                      sync.Mutex                    // mu is a mutex to protect the jobs hashmap
@@ -30,17 +31,25 @@ type InMemoryJobBackendProvider struct {
 	wg                      sync.WaitGroup                // wg is a wait group to wait for the Run function to finish
 	stopChan                chan bool                     // stopChan is a channel to stop the Run function
 	notifChan               chan jobbackendprovider.Event // notifChan is a channel to send notifications to the service
+	restoreFlag             bool                          // restoreFlag is a flag to indicate if the provider is in restore mode
 }
 
-func (p *InMemoryJobBackendProvider) Init(notifChan chan jobbackendprovider.Event) error {
+func (p *InMemoryJobBackendProvider) SetNotifChan(notifChan chan jobbackendprovider.Event) {
+	p.notifChan = notifChan
+}
+
+func (p *InMemoryJobBackendProvider) Init() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if err := p.storage.Init(); err != nil {
 		return err
 	}
-	p.notifChan = notifChan
 	return nil
+}
+
+func (p *InMemoryJobBackendProvider) Shutdown() {
+	p.Stop()
 }
 
 func (p *InMemoryJobBackendProvider) Stop() error {
@@ -53,6 +62,10 @@ func (p *InMemoryJobBackendProvider) Stop() error {
 	// wait for the Run function to finish
 	p.wg.Wait()
 	return nil
+}
+
+func (p *InMemoryJobBackendProvider) SetRestoreFlag(enabled bool) {
+	p.restoreFlag = enabled
 }
 
 func (p *InMemoryJobBackendProvider) JobExists(jobUUID job.JobUUID) (bool, error) {
@@ -124,6 +137,16 @@ func (p *InMemoryJobBackendProvider) OnJobCreated(j *job.Job) error {
 	return nil
 }
 
+func (p *InMemoryJobBackendProvider) OnJobDelayed(j *job.Job) error {
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobDelayed, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *InMemoryJobBackendProvider) OnJobPending(j *job.Job) error {
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobPending, JobUUID: j.JobUUID})
+	return nil
+}
+
 func (p *InMemoryJobBackendProvider) OnJobEnqueued(j *job.Job) error {
 	p.mapMutex.Lock()
 	p.jobs[j.JobUUID] = j
@@ -139,6 +162,11 @@ func (p *InMemoryJobBackendProvider) OnJobCanceled(j *job.Job) error {
 
 func (p *InMemoryJobBackendProvider) OnJobFailed(j *job.Job) error {
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobFailed, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *InMemoryJobBackendProvider) OnJobHidden(j *job.Job) error {
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobHidden, JobUUID: j.JobUUID})
 	return nil
 }
 
@@ -255,6 +283,51 @@ func (p *InMemoryJobBackendProvider) Healthcheck() bool {
 	return true
 }
 
+func (p *InMemoryJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {
+	if p.restoreFlag {
+		return
+	}
+
+	switch ev {
+	case event.ServiceEventJobDeletedAll:
+		p.OnJobsDeleted()
+	}
+}
+
+func (p *InMemoryJobBackendProvider) NotifyTopicEvent(ev event.ServiceEventType, topic string) {
+}
+
+func (p *InMemoryJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
+	if p.restoreFlag {
+		return
+	}
+
+	switch ev {
+	case event.ServiceEventJobCreated:
+		p.OnJobCreated(j)
+	case event.ServiceEventJobDelayed:
+		p.OnJobDelayed(j)
+	case event.ServiceEventJobPending:
+		p.OnJobPending(j)
+	case event.ServiceEventJobEnqueued:
+		p.OnJobEnqueued(j)
+	case event.ServiceEventJobDeleted:
+		p.OnJobDeleted(j.JobUUID)
+	case event.ServiceEventJobStarted:
+		p.OnJobStarted(j)
+	case event.ServiceEventJobSucceeded:
+		p.OnJobSucceeded(j)
+	case event.ServiceEventJobCanceled:
+		p.OnJobCanceled(j)
+	case event.ServiceEventJobFailed:
+		p.OnJobFailed(j)
+	case event.ServiceEventJobHidden:
+		p.OnJobHidden(j)
+	case event.ServiceEventJobTerminated:
+		p.OnJobTerminated(j)
+	}
+}
+
 func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbackendprovider.IJobBackendProvider, error) {
 	if conf.Backend.InMemory.MaxJobs == 0 {
 		return nil, fmt.Errorf("invalid value for configuration backend.inMemory.maxJobs: %d", conf.Backend.InMemory.MaxJobs)
@@ -274,5 +347,6 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 		storage:                 NewDBFileStorage(logger, conf.Backend.InMemory.Directory, conf.Backend.InMemory.Filename),
 		hasChanged:              atomic.Bool{},
 		stopChan:                make(chan bool, 1),
+		restoreFlag:             false,
 	}, nil
 }

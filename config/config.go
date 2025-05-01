@@ -103,9 +103,13 @@ type Config struct {
 		} `yaml:"retentionPolicy"`
 		RetryPolicy retrypolicy.RetryPolicy `yaml:"retryPolicy"`
 	} `yaml:"jobs"`
-	LoggerConfig zap.Config      `yaml:"logger"`
-	WebServer    WebServerConfig `yaml:"webserver"`
-	Consul       ConsulConfig    `yaml:"consul"`
+	LoggerConfig zap.Config `yaml:"logger"`
+	EventsLogger struct {
+		Enable   bool   `yaml:"enable"`
+		FilePath string `yaml:"filepath"`
+	} `yaml:"eventsLogger"`
+	WebServer WebServerConfig `yaml:"webserver"`
+	Consul    ConsulConfig    `yaml:"consul"`
 }
 
 func LoadConfig(filename string) (*Config, error) {

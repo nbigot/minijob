@@ -1,6 +1,7 @@
 package jobbackendprovider
 
 import (
+	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 )
 
@@ -10,6 +11,10 @@ type JobBackendEventType int
 const (
 	// EventJobCreated is an event that is sent when a job is created
 	EventJobCreated JobBackendEventType = iota
+	// EventJobDelayed is an event that is sent when a job is delayed
+	EventJobDelayed
+	// EventJobPending is an event that is sent when a job is pending
+	EventJobPending
 	// EventJobEnqueued is an event that is sent when a job is enqueued
 	EventJobEnqueued
 	// EventJobDeleted is an event that is sent when a job is deleted
@@ -22,6 +27,8 @@ const (
 	EventJobCanceled
 	// EventJobFailed is an event that is sent when a job is failed
 	EventJobFailed
+	// EventJobHidden is an event that is sent when a job is hidden
+	EventJobHidden
 	// EventJobTerminated is an event that is sent when a job is terminated
 	EventJobTerminated
 	// EventJobTimeout is an event that is sent when a job is timeout
@@ -43,9 +50,12 @@ type Event struct {
 }
 
 type IJobBackendProvider interface {
-	Init(notifChan chan Event) error
+	Init() error
 	Stop() error
+	Shutdown()
+	SetNotifChan(chan Event)
 	JobExists(jobUUID job.JobUUID) (bool, error)
+	SetRestoreFlag(enabled bool)
 	LoadJobs() (job.JobMap, error)
 	OnJobCreated(j *job.Job) error
 	OnJobEnqueued(j *job.Job) error
@@ -53,12 +63,16 @@ type IJobBackendProvider interface {
 	OnJobSucceeded(j *job.Job) error
 	OnJobTimeout(j *job.Job) error
 	OnJobFailed(j *job.Job) error
+	OnJobHidden(j *job.Job) error
 	OnJobCanceled(j *job.Job) error
 	OnJobTerminated(j *job.Job) error
 	OnJobDeleted(jobUUID job.JobUUID) error
 	OnJobsDeleted() error
 	OnAllResourcesUnlocked() error
 	OnResourceUnlocked(j *job.Job, resource string) error
+	NotifyEvent(ev event.ServiceEventType)
+	NotifyTopicEvent(ev event.ServiceEventType, topic string)
+	NotifyJobEvent(j *job.Job, ev event.ServiceEventType)
 	Run() error
 	Healthcheck() bool
 }

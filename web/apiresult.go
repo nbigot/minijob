@@ -2,7 +2,7 @@ package web
 
 import (
 	"github.com/nbigot/minijob/job"
-	"github.com/nbigot/minijob/service"
+	"github.com/nbigot/minijob/metrics"
 )
 
 type JSONResultSuccess struct {
@@ -53,15 +53,28 @@ type JSONResultGetLockedResources struct {
 }
 
 type JSONResultGetJobsMetrics struct {
-	Code    int                     `json:"code" example:"200"`        // The result code
-	Message string                  `json:"message" example:"success"` // The result message
-	Metrics *service.ServiceMetrics `json:"metrics"`                   // The metrics
+	Code    int                        `json:"code" example:"200"`        // The result code
+	Message string                     `json:"message" example:"success"` // The result message
+	Metrics metrics.JobMetricsTopicMap `json:"metrics"`                   // The metrics
 }
 
 type JSONResultGetJobsTopics struct {
 	Code    int      `json:"code" example:"200"`        // The result code
 	Message string   `json:"message" example:"success"` // The result message
 	Topics  []string `json:"topics"`                    // The job topics
+}
+
+type TopOldJobsResult struct {
+	JobUUID    string `json:"jobuuid"`  // The job UUID
+	DurationMs int64  `json:"duration"` // The job duration in milliseconds
+}
+
+type TopicOldJobsMap map[string][]TopOldJobsResult
+
+type JSONResultGetOldJobs struct {
+	Code    int             `json:"code"`    // The result code
+	Message string          `json:"message"` // The result message
+	Topics  TopicOldJobsMap `json:"topics"`  // The oldest jobs by topic
 }
 
 type HTTPError struct {

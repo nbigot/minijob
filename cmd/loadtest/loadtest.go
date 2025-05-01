@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -91,33 +92,41 @@ var actionWeights = map[int]map[int]int{
 /////////////////////////////////////////
 // producer const & global variables
 
-const TEST_TOPIC = "service.load_test"
+const TEST_TOPIC_1 = "service.load_test.1"
+const TEST_TOPIC_2 = "service.load_test.2"
 const ALL_TOPICS = "*"
 
 // List of job definitions
 const (
-	JobDefWithoutTopic        = 0
-	JobDefWithTopic           = 1
+	JobDefWithTopic1          = 0
+	JobDefWithTopic2          = 1
 	JobDefWithLockedResources = 2
+	JobDefWithDelayedTopic1   = 3
 )
 
 // Define action weights for each monkeyLevel
 // Use monkeyTestLevel to generate various job scenarios such as:
 var jobScenarioDefinitionWeights = map[int]map[int]int{
 	0: {
-		JobDefWithoutTopic:        100,
-		JobDefWithTopic:           0,
+		JobDefWithTopic1:          100,
+		JobDefWithTopic2:          0,
 		JobDefWithLockedResources: 0,
 	},
 	1: {
-		JobDefWithoutTopic:        50,
-		JobDefWithTopic:           50,
+		JobDefWithTopic1:          50,
+		JobDefWithTopic2:          50,
 		JobDefWithLockedResources: 0,
 	},
 	2: {
-		JobDefWithoutTopic:        50,
-		JobDefWithTopic:           48,
+		JobDefWithTopic1:          50,
+		JobDefWithTopic2:          48,
 		JobDefWithLockedResources: 2,
+	},
+	3: {
+		JobDefWithTopic1:          40,
+		JobDefWithTopic2:          48,
+		JobDefWithLockedResources: 2,
+		JobDefWithDelayedTopic1:   10,
 	},
 }
 
@@ -176,16 +185,6 @@ func DeleteAllJobs(client *http.Client) error {
 	return nil
 }
 
-func jobWithoutTopic(scenario int) string {
-	return fmt.Sprintf(`{
-		"properties": {
-				"scenario": %d
-		},
-		"userAgent": "loadtest",
-		"requester": "goloadtest"
-	}`, scenario)
-}
-
 func jobWithTopic(scenario int, topic string) string {
 	return fmt.Sprintf(`{
 		"topic": "%s",
@@ -197,10 +196,22 @@ func jobWithTopic(scenario int, topic string) string {
 	}`, topic, scenario)
 }
 
+func jobWithDelay(scenario int, topic string, delaySeconds int) string {
+	return fmt.Sprintf(`{
+		"topic": "%s",
+		"properties": {
+				"scenario": %d
+		},
+		"userAgent": "loadtest",
+		"requester": "goloadtest",
+		"delay": %d
+	}`, topic, scenario, delaySeconds)
+}
+
 func jobWithLockedResources(monkeyTestLevel int) string {
-	topic := TEST_TOPIC
-	if monkeyTestLevel > JobDefWithLockedResources {
-		topic = fmt.Sprintf(`%s.%d`, TEST_TOPIC, rand.Intn(4))
+	topic := TEST_TOPIC_1
+	if monkeyTestLevel > 2 {
+		topic = fmt.Sprintf(`%s.%d`, TEST_TOPIC_2, rand.Intn(4))
 	}
 
 	var lockResources string
@@ -256,7 +267,7 @@ func jobWithLockedResources(monkeyTestLevel int) string {
 
 func getRandomJobScenario(level int) int {
 	// depending on the level of monkeytest, get a random job scenario
-	return getRandomValueFromWeightMap(level, jobScenarioDefinitionWeights, JobDefWithoutTopic)
+	return getRandomValueFromWeightMap(level, jobScenarioDefinitionWeights, JobDefWithTopic1)
 }
 
 func jobGenerator() string {
@@ -265,11 +276,14 @@ func jobGenerator() string {
 	switch jobScenario {
 	case JobDefWithLockedResources:
 		return jobWithLockedResources(*monkeyTestLevel)
-	case JobDefWithTopic:
-		return jobWithTopic(JobDefWithTopic, TEST_TOPIC)
+	case JobDefWithTopic1:
+		return jobWithTopic(JobDefWithTopic1, TEST_TOPIC_1)
+	case JobDefWithTopic2:
+		return jobWithTopic(JobDefWithTopic2, TEST_TOPIC_2)
+	case JobDefWithDelayedTopic1:
+		return jobWithDelay(JobDefWithTopic2, TEST_TOPIC_1, 2)
 	default:
-		// same as case JobDefWithoutTopic:
-		return jobWithoutTopic(JobDefWithoutTopic)
+		panic("invalid job scenario")
 	}
 }
 
@@ -470,9 +484,9 @@ func pull_job_from_queue(client *http.Client, topic string, monkeyTestLevel int)
 
 	// job topic
 	queryTopic := ""
-	if topic != "" && topic != ALL_TOPICS {
-		queryTopic = fmt.Sprintf("&%s=%s", constants.JobTopicParam, topic)
-		queryTopic = strings.ReplaceAll(queryTopic, ".", "%2E")
+	if topic != "" {
+		// url encode the topic
+		queryTopic = fmt.Sprintf("&%s=%s", constants.JobTopicParam, url.QueryEscape(topic))
 	}
 
 	// number of jobs to pull

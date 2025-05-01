@@ -92,6 +92,9 @@ const docTemplate = `{
         "/api/v1/job/": {
             "post": {
                 "description": "Create job",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -100,11 +103,28 @@ const docTemplate = `{
                 ],
                 "summary": "Create job",
                 "operationId": "job-create",
+                "parameters": [
+                    {
+                        "description": "Job creation request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/job.JobRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "successful operation",
                         "schema": {
                             "$ref": "#/definitions/web.JSONResultCreateJob"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid input - content type, JSON body format or validation errors",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_nbigot_minijob_web_apierror.APIError"
                         }
                     }
                 }
@@ -200,14 +220,14 @@ const docTemplate = `{
         },
         "/api/v1/job/{jobuuid}/cancel": {
             "post": {
-                "description": "Cancel a job",
+                "description": "Cancel a job that is running",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Jobs"
                 ],
-                "summary": "Cancel a job",
+                "summary": "Cancel a running job",
                 "operationId": "job-cancel",
                 "responses": {
                     "200": {
@@ -343,22 +363,78 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/jobs/monitor": {
+        "/api/v1/jobs/old": {
             "get": {
-                "description": "Monitor jobs",
+                "description": "Get top N oldest jobs that are not completed, grouped by topic",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Jobs"
                 ],
-                "summary": "Monitor jobs",
-                "operationId": "job-monitor",
+                "summary": "Get oldest incomplete jobs",
+                "operationId": "jobs-get-old",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Number of jobs per topic (default 10, min 1, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Minimum job duration in seconds (default 0, max 1 year)",
+                        "name": "duration",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "successful operation",
                         "schema": {
-                            "$ref": "#/definitions/web.JSONResultSuccess"
+                            "$ref": "#/definitions/web.JSONResultGetOldJobs"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/jobs/topics": {
+            "get": {
+                "description": "Get jobs topics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Jobs"
+                ],
+                "summary": "Get jobs topics",
+                "operationId": "jobs-topics",
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultGetJobsTopics"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/observability/metrics": {
+            "get": {
+                "description": "Get jobs metrics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Utils"
+                ],
+                "summary": "Get jobs metrics",
+                "operationId": "jobs-metrics",
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultGetJobsMetrics"
                         }
                     }
                 }
@@ -401,27 +477,6 @@ const docTemplate = `{
                         "description": "successful operation",
                         "schema": {
                             "$ref": "#/definitions/web.JSONResultSuccess"
-                        }
-                    }
-                }
-            }
-        },
-        "/computemetrics": {
-            "post": {
-                "description": "Compute server metrics",
-                "produces": [
-                    "text/plain"
-                ],
-                "tags": [
-                    "Utils"
-                ],
-                "summary": "Compute server metrics",
-                "operationId": "utils-metrics-compute",
-                "responses": {
-                    "200": {
-                        "description": "ok",
-                        "schema": {
-                            "type": "string"
                         }
                     }
                 }
@@ -622,10 +677,140 @@ const docTemplate = `{
             "type": "object",
             "additionalProperties": true
         },
+        "job.JobRequest": {
+            "type": "object",
+            "required": [
+                "properties"
+            ],
+            "properties": {
+                "debugMode": {
+                    "description": "DebugMode is the debug flag of the job (optional)",
+                    "type": "boolean"
+                },
+                "delay": {
+                    "description": "Delay (in seconds) to wait before starting the job",
+                    "type": "integer"
+                },
+                "lockResources": {
+                    "description": "LockResources is the list of resources to lock (optional)",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "description": "Name is the name of the job (optional)",
+                    "type": "string",
+                    "example": "myJobName01"
+                },
+                "priority": {
+                    "description": "Priority is the priority of the job (optional)",
+                    "type": "integer"
+                },
+                "properties": {
+                    "description": "Properties is the job properties (required)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/job.JobProperties"
+                        }
+                    ]
+                },
+                "requester": {
+                    "description": "Requester is the identifier of the job requester (optional)",
+                    "type": "string"
+                },
+                "sessionId": {
+                    "description": "SessionId is the session identifier of the requester (optional)",
+                    "type": "string",
+                    "example": "6e70464d-85cf-431d-a9c9-a1f9c0ac82dc"
+                },
+                "startAfter": {
+                    "description": "Timestamp (in milliseconds) to start the job after",
+                    "type": "integer"
+                },
+                "topic": {
+                    "description": "Topic is the topic name for which the job has been created (optional)",
+                    "type": "string",
+                    "example": "default"
+                },
+                "traceId": {
+                    "description": "TraceId is the trace identifier of the job (optional)",
+                    "type": "string",
+                    "example": "e7b46b16-c971-464e-8a47-c791be0ce2ed"
+                },
+                "userAgent": {
+                    "description": "UserAgent is the user agent (or program name) that make the request (optional)",
+                    "type": "string",
+                    "example": "myJobProducerName"
+                }
+            }
+        },
         "job.LockedResources": {
             "type": "object",
             "additionalProperties": {
                 "type": "string"
+            }
+        },
+        "metrics.JobMetrics": {
+            "type": "object",
+            "properties": {
+                "jobsCounterDeleted": {
+                    "description": "total number of deleted jobs (ever)",
+                    "type": "integer"
+                },
+                "jobsExisting": {
+                    "description": "current number of existing jobs",
+                    "type": "integer"
+                },
+                "jobsStatusCanceled": {
+                    "description": "current number of canceled jobs",
+                    "type": "integer"
+                },
+                "jobsStatusCreated": {
+                    "description": "current number of created jobs",
+                    "type": "integer"
+                },
+                "jobsStatusDelayed": {
+                    "description": "current number of delayed jobs",
+                    "type": "integer"
+                },
+                "jobsStatusFailed": {
+                    "description": "current number of failed jobs",
+                    "type": "integer"
+                },
+                "jobsStatusHidden": {
+                    "description": "current number of hidden jobs",
+                    "type": "integer"
+                },
+                "jobsStatusPending": {
+                    "description": "current number of pending jobs",
+                    "type": "integer"
+                },
+                "jobsStatusQueued": {
+                    "description": "current number of queued jobs",
+                    "type": "integer"
+                },
+                "jobsStatusRunning": {
+                    "description": "current number of running jobs",
+                    "type": "integer"
+                },
+                "jobsStatusSucceeded": {
+                    "description": "current number of succeeded jobs",
+                    "type": "integer"
+                },
+                "resourcesLockedCount": {
+                    "description": "current number of locked resources",
+                    "type": "integer"
+                }
+            }
+        },
+        "metrics.JobMetricsTopicMap": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/definitions/metrics.JobMetrics"
+                }
             }
         },
         "web.JSONResultCloneJob": {
@@ -719,6 +904,51 @@ const docTemplate = `{
                 }
             }
         },
+        "web.JSONResultGetJobsMetrics": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer",
+                    "example": 200
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string",
+                    "example": "success"
+                },
+                "metrics": {
+                    "description": "The metrics",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/metrics.JobMetricsTopicMap"
+                        }
+                    ]
+                }
+            }
+        },
+        "web.JSONResultGetJobsTopics": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer",
+                    "example": 200
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string",
+                    "example": "success"
+                },
+                "topics": {
+                    "description": "The job topics",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "web.JSONResultGetLockedResources": {
             "type": "object",
             "properties": {
@@ -737,6 +967,27 @@ const docTemplate = `{
                     "allOf": [
                         {
                             "$ref": "#/definitions/job.LockedResources"
+                        }
+                    ]
+                }
+            }
+        },
+        "web.JSONResultGetOldJobs": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer"
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string"
+                },
+                "topics": {
+                    "description": "The oldest jobs by topic",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/web.TopicOldJobsMap"
                         }
                     ]
                 }
@@ -776,6 +1027,28 @@ const docTemplate = `{
                     "description": "The result message",
                     "type": "string",
                     "example": "success"
+                }
+            }
+        },
+        "web.TopOldJobsResult": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "description": "The job duration in milliseconds",
+                    "type": "integer"
+                },
+                "jobuuid": {
+                    "description": "The job UUID",
+                    "type": "string"
+                }
+            }
+        },
+        "web.TopicOldJobsMap": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/definitions/web.TopOldJobsResult"
                 }
             }
         }

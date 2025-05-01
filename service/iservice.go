@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/nbigot/minijob/job"
+	"github.com/nbigot/minijob/metrics"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +26,7 @@ type IService interface {
 	GetJobsUUIDs() job.JobUUIDList
 	LoadJobs() error
 	GetJob(job.JobUUID) (*job.Job, error)
-	GetAllJobs() ([]*job.Job, error)
+	GetAllJobs() []*job.Job
 	CreateJob(payload []byte) (*job.Job, error)
 	PullJobs(*RequestPullJobs) (*ResponsePullJobs, error)
 	StartJob(job.JobUUID, *RequestPullJobs) error
@@ -40,10 +41,9 @@ type IService interface {
 	UnlockAllResources() error
 	ChangeVisibilityTimeoutJob(job.JobUUID, uint) error
 	Healthcheck() bool
-	GetMetrics() IServiceMetrics
+	GetMetrics() metrics.IServiceMetrics
 	GetJobsTopics() []string
 	TryEnqueuePendingJobs()
-	CheckJobsVisibility()
-	GetServiceEventChan() chan ServiceEvent
+	CheckJobsVisibilityTimeout()
 	GetLogger() *zap.Logger
 }

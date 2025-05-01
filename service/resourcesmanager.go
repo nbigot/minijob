@@ -11,9 +11,8 @@ import (
 
 type ResourcesManager struct {
 	lockedResources job.LockedResources // map of locked resources currently in use by the jobs
-	//mapMutex        sync.RWMutex        // mutex to protect hashmap of jobs
-	mu     sync.Mutex  // to ensure safe concurrent manipulation of jobs
-	logger *zap.Logger // logger
+	mu              sync.Mutex          // to ensure safe concurrent manipulation of jobs
+	logger          *zap.Logger         // logger
 }
 
 func (m *ResourcesManager) GetLockedResources() job.LockedResources {
@@ -64,7 +63,7 @@ func (m *ResourcesManager) LockResources(j *job.Job) error {
 	return m.lockResources(j)
 }
 
-func (m *ResourcesManager) UnlockResources(j *job.Job) error {
+func (m *ResourcesManager) UnlockResources(j *job.Job) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -72,13 +71,11 @@ func (m *ResourcesManager) UnlockResources(j *job.Job) error {
 	for _, r := range j.LockResources {
 		delete(m.lockedResources, r)
 	}
-
-	return nil
 }
 
 func (m *ResourcesManager) areRequiredResourcesFree(j *job.Job) (bool, string) {
 	// Check if the resources required by the job are free
-	for _, r := range j.LockResources { // BUG: fatal error: concurrent map read and map write
+	for _, r := range j.LockResources {
 		if _, found := m.lockedResources[r]; found {
 			return false, r
 		}
@@ -98,7 +95,7 @@ func (m *ResourcesManager) lockResources(j *job.Job) error {
 		}
 
 		// lock the resource
-		m.lockedResources[r] = j.JobUUID // BUG: fatal error: concurrent map read and map write
+		m.lockedResources[r] = j.JobUUID
 	}
 
 	return nil

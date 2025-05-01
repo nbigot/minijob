@@ -93,9 +93,104 @@ definitions:
   job.JobProperties:
     additionalProperties: true
     type: object
+  job.JobRequest:
+    properties:
+      debugMode:
+        description: DebugMode is the debug flag of the job (optional)
+        type: boolean
+      delay:
+        description: Delay (in seconds) to wait before starting the job
+        type: integer
+      lockResources:
+        description: LockResources is the list of resources to lock (optional)
+        items:
+          type: string
+        type: array
+      name:
+        description: Name is the name of the job (optional)
+        example: myJobName01
+        type: string
+      priority:
+        description: Priority is the priority of the job (optional)
+        type: integer
+      properties:
+        allOf:
+        - $ref: '#/definitions/job.JobProperties'
+        description: Properties is the job properties (required)
+      requester:
+        description: Requester is the identifier of the job requester (optional)
+        type: string
+      sessionId:
+        description: SessionId is the session identifier of the requester (optional)
+        example: 6e70464d-85cf-431d-a9c9-a1f9c0ac82dc
+        type: string
+      startAfter:
+        description: Timestamp (in milliseconds) to start the job after
+        type: integer
+      topic:
+        description: Topic is the topic name for which the job has been created (optional)
+        example: default
+        type: string
+      traceId:
+        description: TraceId is the trace identifier of the job (optional)
+        example: e7b46b16-c971-464e-8a47-c791be0ce2ed
+        type: string
+      userAgent:
+        description: UserAgent is the user agent (or program name) that make the request
+          (optional)
+        example: myJobProducerName
+        type: string
+    required:
+    - properties
+    type: object
   job.LockedResources:
     additionalProperties:
       type: string
+    type: object
+  metrics.JobMetrics:
+    properties:
+      jobsCounterDeleted:
+        description: total number of deleted jobs (ever)
+        type: integer
+      jobsExisting:
+        description: current number of existing jobs
+        type: integer
+      jobsStatusCanceled:
+        description: current number of canceled jobs
+        type: integer
+      jobsStatusCreated:
+        description: current number of created jobs
+        type: integer
+      jobsStatusDelayed:
+        description: current number of delayed jobs
+        type: integer
+      jobsStatusFailed:
+        description: current number of failed jobs
+        type: integer
+      jobsStatusHidden:
+        description: current number of hidden jobs
+        type: integer
+      jobsStatusPending:
+        description: current number of pending jobs
+        type: integer
+      jobsStatusQueued:
+        description: current number of queued jobs
+        type: integer
+      jobsStatusRunning:
+        description: current number of running jobs
+        type: integer
+      jobsStatusSucceeded:
+        description: current number of succeeded jobs
+        type: integer
+      resourcesLockedCount:
+        description: current number of locked resources
+        type: integer
+    type: object
+  metrics.JobMetricsTopicMap:
+    additionalProperties:
+      items:
+        $ref: '#/definitions/metrics.JobMetrics'
+      type: array
     type: object
   web.JSONResultCloneJob:
     properties:
@@ -158,6 +253,37 @@ definitions:
         example: success
         type: string
     type: object
+  web.JSONResultGetJobsMetrics:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      message:
+        description: The result message
+        example: success
+        type: string
+      metrics:
+        allOf:
+        - $ref: '#/definitions/metrics.JobMetricsTopicMap'
+        description: The metrics
+    type: object
+  web.JSONResultGetJobsTopics:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      message:
+        description: The result message
+        example: success
+        type: string
+      topics:
+        description: The job topics
+        items:
+          type: string
+        type: array
+    type: object
   web.JSONResultGetLockedResources:
     properties:
       code:
@@ -172,6 +298,19 @@ definitions:
         allOf:
         - $ref: '#/definitions/job.LockedResources'
         description: The locked resources
+    type: object
+  web.JSONResultGetOldJobs:
+    properties:
+      code:
+        description: The result code
+        type: integer
+      message:
+        description: The result message
+        type: string
+      topics:
+        allOf:
+        - $ref: '#/definitions/web.TopicOldJobsMap'
+        description: The oldest jobs by topic
     type: object
   web.JSONResultPullJob:
     properties:
@@ -199,6 +338,21 @@ definitions:
         description: The result message
         example: success
         type: string
+    type: object
+  web.TopOldJobsResult:
+    properties:
+      duration:
+        description: The job duration in milliseconds
+        type: integer
+      jobuuid:
+        description: The job UUID
+        type: string
+    type: object
+  web.TopicOldJobsMap:
+    additionalProperties:
+      items:
+        $ref: '#/definitions/web.TopOldJobsResult'
+      type: array
     type: object
 host: 127.0.0.1:8080
 info:
@@ -258,8 +412,17 @@ paths:
       - Admin
   /api/v1/job/:
     post:
+      consumes:
+      - application/json
       description: Create job
       operationId: job-create
+      parameters:
+      - description: Job creation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/job.JobRequest'
       produces:
       - application/json
       responses:
@@ -267,6 +430,11 @@ paths:
           description: successful operation
           schema:
             $ref: '#/definitions/web.JSONResultCreateJob'
+        "400":
+          description: Invalid input - content type, JSON body format or validation
+            errors
+          schema:
+            $ref: '#/definitions/github_com_nbigot_minijob_web_apierror.APIError'
       summary: Create job
       tags:
       - Jobs
@@ -317,7 +485,7 @@ paths:
       - Jobs
   /api/v1/job/{jobuuid}/cancel:
     post:
-      description: Cancel a job
+      description: Cancel a job that is running
       operationId: job-cancel
       produces:
       - application/json
@@ -326,7 +494,7 @@ paths:
           description: successful operation
           schema:
             $ref: '#/definitions/web.JSONResultSuccess'
-      summary: Cancel a job
+      summary: Cancel a running job
       tags:
       - Jobs
   /api/v1/job/{jobuuid}/clone:
@@ -426,20 +594,57 @@ paths:
       summary: Get all jobs
       tags:
       - Jobs
-  /api/v1/jobs/monitor:
+  /api/v1/jobs/old:
     get:
-      description: Monitor jobs
-      operationId: job-monitor
+      description: Get top N oldest jobs that are not completed, grouped by topic
+      operationId: jobs-get-old
+      parameters:
+      - description: Number of jobs per topic (default 10, min 1, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Minimum job duration in seconds (default 0, max 1 year)
+        in: query
+        name: duration
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: successful operation
           schema:
-            $ref: '#/definitions/web.JSONResultSuccess'
-      summary: Monitor jobs
+            $ref: '#/definitions/web.JSONResultGetOldJobs'
+      summary: Get oldest incomplete jobs
       tags:
       - Jobs
+  /api/v1/jobs/topics:
+    get:
+      description: Get jobs topics
+      operationId: jobs-topics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetJobsTopics'
+      summary: Get jobs topics
+      tags:
+      - Jobs
+  /api/v1/observability/metrics:
+    get:
+      description: Get jobs metrics
+      operationId: jobs-metrics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetJobsMetrics'
+      summary: Get jobs metrics
+      tags:
+      - Utils
   /api/v1/resources/locked:
     get:
       description: Get locked Resources
@@ -468,20 +673,6 @@ paths:
       summary: Unlock all resources
       tags:
       - Resources
-  /computemetrics:
-    post:
-      description: Compute server metrics
-      operationId: utils-metrics-compute
-      produces:
-      - text/plain
-      responses:
-        "200":
-          description: ok
-          schema:
-            type: string
-      summary: Compute server metrics
-      tags:
-      - Utils
   /healthcheck:
     get:
       description: Healthcheck server
