@@ -470,6 +470,35 @@ func (svc *Service) DeleteAllJobs() error {
 	return nil
 }
 
+func (svc *Service) DeleteQueuedJobs() error {
+	// First, collect the job UUIDs to delete while holding the lock
+	svc.mapMutex.RLock()
+	jobUUIDsToDelete := make([]job.JobUUID, 0)
+	for jobUUID, j := range svc.jobs {
+		jobState := j.GetState()
+		if jobState == job.JobCreated || jobState == job.JobDelayed || jobState == job.JobPending || jobState == job.JobQueued {
+			jobUUIDsToDelete = append(jobUUIDsToDelete, jobUUID)
+		}
+	}
+	svc.mapMutex.RUnlock()
+
+	// Now, delete jobs outside the lock to avoid deadlock and iteration issues
+	for _, jobUUID := range jobUUIDsToDelete {
+		if err := svc.DeleteJob(jobUUID); err != nil {
+			svc.logger.Error(
+				"Cannot delete queued job",
+				zap.String("topic", "service"),
+				zap.String("method", "DeleteQueuedJobs"),
+				zap.String("JobUUID", jobUUID.String()),
+				zap.Error(err),
+			)
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (svc *Service) UnlockJobResources(j *job.Job) {
 	cptJobLockResources := len(j.LockResources)
 	if cptJobLockResources == 0 {

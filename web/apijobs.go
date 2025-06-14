@@ -34,6 +34,40 @@ func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 	)
 }
 
+// DeleteQueuedJobs godoc
+// @Summary Delete queued jobs
+// @Description Delete queued jobs
+// @ID jobs-delete-queued
+// @Produce json
+// @Tags Jobs
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
+// @Router /api/v1/jobs/queued [delete]
+func (w *WebAPIServer) DeleteQueuedJobs(c *fiber.Ctx) error {
+	c.Locals("metricName", "DeleteQueuedJobs")
+
+	err := w.service.DeleteQueuedJobs()
+	if err != nil {
+		// check if type of err is apierror.APIError
+		if _, ok := err.(*apierror.APIError); ok {
+			return err.(*apierror.APIError).HTTPResponse(c)
+		}
+		apiErr := apierror.APIError{
+			Message:  "cannot delete queued jobs",
+			Code:     constants.ErrorCantDeleteJob,
+			HttpCode: fiber.StatusBadRequest,
+			Err:      err,
+		}
+		return apiErr.HTTPResponse(c)
+	}
+
+	return c.JSON(
+		JSONResultSuccess{
+			Code:    fiber.StatusOK,
+			Message: "success",
+		},
+	)
+}
+
 // DeleteAllJobs godoc
 // @Summary Delete all jobs
 // @Description Delete all jobs

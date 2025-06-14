@@ -35,6 +35,7 @@ type IService interface {
 	SetJobAsSuccessful(job.JobUUID) error
 	FailJob(job.JobUUID) (reachedMaxRetry bool, err error)
 	DeleteJob(job.JobUUID) error
+	DeleteQueuedJobs() error
 	DeleteAllJobs() error
 	GenerateNewJobUuid() (job.JobUUID, error)
 	GetLockedResources() job.LockedResources
