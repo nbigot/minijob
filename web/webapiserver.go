@@ -51,17 +51,23 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 	apiJobs := api.Group("/jobs")
 	apiJobs.Get("/", w.GetAllJobs)
-	apiJobs.Get("/topics", w.GetJobsTopics)
 	apiJobs.Get("/oldest", w.GetOldestJobs)
 	apiJobs.Delete("/queued", w.DeleteQueuedJobs)
 	apiJobs.Delete("/", w.DeleteAllJobs)
+
+	apiTopics := api.Group("/topics")
+	apiTopics.Get("/", w.GetTopics)
+	apiTopics.Get("/stats", w.GetTopicsStats)
 
 	apiObservability := api.Group("/observability")
 	apiObservability.Get("/metrics", w.GetJobsMetrics)
 
 	apiResources := api.Group("/resources")
-	apiResources.Get("/locked", w.GetLockedResources)
+	apiResources.Get("/", w.GetLockedResources)
 	apiResources.Post("/unlock", w.UnlockAllResources)
+
+	apiResource := api.Group("/resource")
+	apiResource.Post("/:"+constants.ResourceNameQueryParam+"/unlock", w.UnlockResource)
 
 	apiAdmin := api.Group("/admin")
 	apiAdmin.Post("/server/shutdown", w.ApiServerShutdown)

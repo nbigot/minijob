@@ -192,6 +192,27 @@ definitions:
         $ref: '#/definitions/metrics.JobMetrics'
       type: array
     type: object
+  metrics.TopicMetrics:
+    properties:
+      activeJobs:
+        description: number of active jobs in the topic
+        type: integer
+      averageDuration:
+        description: average duration of jobs in the topic (in seconds)
+        type: number
+      percentJobs:
+        description: percentage of jobs in the topic (0.0 - 100.0)
+        type: number
+      successRate:
+        description: success rate of jobs in the topic (0.0 - 1.0)
+        type: number
+      topicName:
+        description: name of the topic
+        type: string
+      totalJobs:
+        description: total number of jobs in the topic
+        type: integer
+    type: object
   web.JSONResultCloneJob:
     properties:
       code:
@@ -268,22 +289,6 @@ definitions:
         - $ref: '#/definitions/metrics.JobMetricsTopicMap'
         description: The metrics
     type: object
-  web.JSONResultGetJobsTopics:
-    properties:
-      code:
-        description: The result code
-        example: 200
-        type: integer
-      message:
-        description: The result message
-        example: success
-        type: string
-      topics:
-        description: The job topics
-        items:
-          type: string
-        type: array
-    type: object
   web.JSONResultGetLockedResources:
     properties:
       code:
@@ -311,6 +316,38 @@ definitions:
         allOf:
         - $ref: '#/definitions/web.TopicOldJobsMap'
         description: The oldest jobs by topic
+    type: object
+  web.JSONResultGetTopics:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      message:
+        description: The result message
+        example: success
+        type: string
+      topics:
+        description: The job topics
+        items:
+          type: string
+        type: array
+    type: object
+  web.JSONResultGetTopicsStats:
+    properties:
+      code:
+        description: The result code
+        example: 200
+        type: integer
+      message:
+        description: The result message
+        example: success
+        type: string
+      topics:
+        description: The job topics with metrics
+        items:
+          $ref: '#/definitions/metrics.TopicMetrics'
+        type: array
     type: object
   web.JSONResultPullJob:
     properties:
@@ -617,18 +654,18 @@ paths:
       summary: Get oldest incomplete jobs
       tags:
       - Jobs
-  /api/v1/jobs/topics:
-    get:
-      description: Get jobs topics
-      operationId: jobs-topics
+  /api/v1/jobs/queued:
+    delete:
+      description: Delete queued jobs
+      operationId: jobs-delete-queued
       produces:
       - application/json
       responses:
         "200":
           description: successful operation
           schema:
-            $ref: '#/definitions/web.JSONResultGetJobsTopics'
-      summary: Get jobs topics
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Delete queued jobs
       tags:
       - Jobs
   /api/v1/observability/metrics:
@@ -645,6 +682,20 @@ paths:
       summary: Get jobs metrics
       tags:
       - Utils
+  /api/v1/resource/{resourceName}/unlock:
+    post:
+      description: Unlock a single resource
+      operationId: resource-unlock
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultSuccess'
+      summary: Unlock a single resource
+      tags:
+      - Resources
   /api/v1/resources/locked:
     get:
       description: Get locked Resources
@@ -673,6 +724,34 @@ paths:
       summary: Unlock all resources
       tags:
       - Resources
+  /api/v1/topics:
+    get:
+      description: Get jobs topics
+      operationId: jobs-topics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetTopics'
+      summary: Get jobs topics
+      tags:
+      - Topics
+  /api/v1/topics/stats:
+    get:
+      description: Get topics stats
+      operationId: topics-stats
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultGetTopicsStats'
+      summary: Get topics stats
+      tags:
+      - Topics
   /healthcheck:
     get:
       description: Healthcheck server

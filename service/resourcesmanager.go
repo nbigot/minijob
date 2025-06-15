@@ -32,6 +32,22 @@ func (m *ResourcesManager) UnlockAllResources() {
 	defer m.mu.Unlock()
 
 	m.lockedResources = make(job.LockedResources)
+	m.logger.Info("All resources unlocked")
+}
+
+func (m *ResourcesManager) UnlockResource(resourceName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if the resource is locked
+	if _, found := m.lockedResources[resourceName]; !found {
+		m.logger.Warn("Resource not found", zap.String("resource", resourceName))
+		return errors.New("resource not found: " + resourceName)
+	}
+	// Unlock the resource
+	delete(m.lockedResources, resourceName)
+	m.logger.Info("Resource unlocked", zap.String("resource", resourceName))
+	return nil
 }
 
 func (m *ResourcesManager) LockResourcesForJobs(jobs job.JobMap) {

@@ -40,10 +40,11 @@ type IService interface {
 	GenerateNewJobUuid() (job.JobUUID, error)
 	GetLockedResources() job.LockedResources
 	UnlockAllResources() error
+	UnlockResource(string) error
 	ChangeVisibilityTimeoutJob(job.JobUUID, uint) error
 	Healthcheck() bool
 	GetMetrics() metrics.IServiceMetrics
-	GetJobsTopics() []string
+	GetTopics() []string
 	TryEnqueuePendingJobs()
 	CheckJobsVisibilityTimeout()
 	GetLogger() *zap.Logger

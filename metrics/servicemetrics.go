@@ -10,6 +10,15 @@ import (
 	"github.com/nbigot/minijob/job"
 )
 
+type TopicMetrics struct {
+	TopicName       string  `json:"topicName"`       // name of the topic
+	TotalJobs       uint    `json:"totalJobs"`       // total number of jobs in the topic
+	PercentJobs     float64 `json:"percentJobs"`     // percentage of jobs in the topic (0.0 - 100.0)
+	ActiveJobs      uint    `json:"activeJobs"`      // number of active jobs in the topic
+	SuccessRate     float64 `json:"successRate"`     // success rate of jobs in the topic (0.0 - 1.0)
+	AverageDuration float64 `json:"averageDuration"` // average duration of jobs in the topic (in seconds)
+}
+
 // note: a counter represents a continuously increasing value, unlike a gauge, and does not go down
 type JobMetrics struct {
 	ResourcesLockedCount uint `json:"resourcesLockedCount"` // current number of locked resources
@@ -42,6 +51,8 @@ func (j *JobMetrics) Clear() {
 }
 
 type JobMetricsTopicMap map[string][]JobMetrics
+
+type JobMetricsTopicStatsMap map[string][]TopicMetrics
 
 type ServiceMetrics struct {
 	// implements IServiceMetrics & IServiceEventObserver interfaces
@@ -194,8 +205,28 @@ func (s *ServiceMetrics) OnDeleteAllJobs() {
 	})
 }
 
-func (s *ServiceMetrics) GetJobsTopics() []string {
+func (s *ServiceMetrics) GetTopics() []string {
 	return s.Topics
+}
+
+func (s *ServiceMetrics) GetTopicsStats() []TopicMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stats := []TopicMetrics{}
+	for _, topic := range s.Topics {
+		jobMetrics := s.GetMetricByTopic(topic)
+		stats = append(stats, TopicMetrics{
+			TopicName:       topic,
+			TotalJobs:       jobMetrics.JobsExisting + jobMetrics.JobsCounterDeleted,
+			PercentJobs:     0.0, // TODO: will be computed later
+			ActiveJobs:      jobMetrics.JobsStatusRunning + jobMetrics.JobsStatusPending + jobMetrics.JobsStatusQueued,
+			SuccessRate:     0.0, // TODO: will be computed later
+			AverageDuration: 0.0, // TODO: will be computed later
+		})
+	}
+
+	return stats
 }
 
 func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int) {

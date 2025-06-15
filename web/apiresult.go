@@ -58,10 +58,16 @@ type JSONResultGetJobsMetrics struct {
 	Metrics metrics.JobMetricsTopicMap `json:"metrics"`                   // The metrics
 }
 
-type JSONResultGetJobsTopics struct {
+type JSONResultGetTopics struct {
 	Code    int      `json:"code" example:"200"`        // The result code
 	Message string   `json:"message" example:"success"` // The result message
 	Topics  []string `json:"topics"`                    // The job topics
+}
+
+type JSONResultGetTopicsStats struct {
+	Code    int                    `json:"code" example:"200"`        // The result code
+	Message string                 `json:"message" example:"success"` // The result message
+	Topics  []metrics.TopicMetrics `json:"topics"`                    // The job topics with metrics
 }
 
 type TopOldJobsResult struct {

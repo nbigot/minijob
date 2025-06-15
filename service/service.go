@@ -1170,6 +1170,12 @@ func (svc *Service) UnlockAllResources() error {
 	return svc.bp.OnAllResourcesUnlocked()
 }
 
+func (svc *Service) UnlockResource(resourceName string) error {
+	// this is used to unlock a specific resource
+	// it is not used in normal operation (it is a safety net)
+	return svc.resourcesManager.UnlockResource(resourceName)
+}
+
 func (svc *Service) Healthcheck() bool {
 	return svc.bp.Healthcheck()
 }
@@ -1178,8 +1184,8 @@ func (svc *Service) GetMetrics() metrics.IServiceMetrics {
 	return svc.metrics
 }
 
-func (svc *Service) GetJobsTopics() []string {
-	return svc.metrics.GetJobsTopics()
+func (svc *Service) GetTopics() []string {
+	return svc.metrics.GetTopics()
 }
 
 func (svc *Service) CheckJobsRetention() {

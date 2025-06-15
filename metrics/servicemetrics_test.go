@@ -32,7 +32,7 @@ func TestServiceMetrics_AddTopic(t *testing.T) {
 	assert.Equal(t, uint(0), jobMetrics.JobsExisting)
 
 	// Verify topics list contains the new topic
-	assert.Contains(t, serviceMetrics.GetJobsTopics(), topic)
+	assert.Contains(t, serviceMetrics.GetTopics(), topic)
 
 	// Verify GetMetricByTopic returns the same metrics
 	retrievedMetrics := serviceMetrics.GetMetricByTopic(topic)
@@ -48,7 +48,7 @@ func TestServiceMetrics_GetMetricByTopic(t *testing.T) {
 
 	// Verify it was created
 	assert.NotNil(t, jobMetrics)
-	assert.Contains(t, serviceMetrics.GetJobsTopics(), topic)
+	assert.Contains(t, serviceMetrics.GetTopics(), topic)
 
 	// Get metrics for existing topic
 	retrievedMetrics := serviceMetrics.GetMetricByTopic(topic)

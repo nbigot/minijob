@@ -10,7 +10,8 @@ type IServiceMetrics interface {
 	Init() error
 	Shutdown()
 	GetFiberPrometheus() *fiberprometheus.FiberPrometheus
-	GetJobsTopics() []string
+	GetTopics() []string
+	GetTopicsStats() []TopicMetrics
 	GetMetricByTopic(topic string) *JobMetrics
 	NotifyEvent(event.ServiceEventType)
 	NotifyTopicEvent(ev event.ServiceEventType, topic string)

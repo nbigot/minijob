@@ -610,21 +610,40 @@ func (w *WebAPIServer) GetJobsMetrics(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
-// GetJobsTopics godoc
+// GetTopics godoc
 // @Summary Get jobs topics
 // @Description Get jobs topics
 // @ID jobs-topics
 // @Produce json
-// @Tags Jobs
-// @success 200 {object} web.JSONResultGetJobsTopics{} "successful operation"
-// @Router /api/v1/jobs/topics [get]
-func (w *WebAPIServer) GetJobsTopics(c *fiber.Ctx) error {
-	c.Locals("metricName", "GetJobsTopics")
+// @Tags Topics
+// @success 200 {object} web.JSONResultGetTopics{} "successful operation"
+// @Router /api/v1/topics [get]
+func (w *WebAPIServer) GetTopics(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetTopics")
 	return c.JSON(
-		JSONResultGetJobsTopics{
+		JSONResultGetTopics{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Topics:  w.service.GetJobsTopics(),
+			Topics:  w.service.GetTopics(),
+		},
+	)
+}
+
+// GetTopicsStats godoc
+// @Summary Get topics stats
+// @Description Get topics stats
+// @ID topics-stats
+// @Produce json
+// @Tags Topics
+// @success 200 {object} web.JSONResultGetTopicsStats{} "successful operation"
+// @Router /api/v1/topics/stats [get]
+func (w *WebAPIServer) GetTopicsStats(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetTopicsStats")
+	return c.JSON(
+		JSONResultGetTopicsStats{
+			Code:    fiber.StatusOK,
+			Message: "success",
+			Topics:  w.service.GetMetrics().GetTopicsStats(),
 		},
 	)
 }

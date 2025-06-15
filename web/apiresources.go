@@ -1,6 +1,9 @@
 package web
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/nbigot/minijob/constants"
+)
 
 // GetLockedResources godoc
 // @Summary Get locked Resources
@@ -38,6 +41,39 @@ func (w *WebAPIServer) UnlockAllResources(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(err)
 	}
+	return c.JSON(
+		JSONResultSuccess{
+			Code:    fiber.StatusOK,
+			Message: "success",
+		},
+	)
+}
+
+// UnlockResource godoc
+// @Summary Unlock a single resource
+// @Description Unlock a single resource
+// @ID resource-unlock
+// @Produce json
+// @Tags Resources
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
+// @Router /api/v1/resource/{resourceName}/unlock [post]
+func (w *WebAPIServer) UnlockResource(c *fiber.Ctx) error {
+	c.Locals("metricName", "UnlockResource")
+	resourceName := c.Query(constants.ResourceNameQueryParam)
+	if resourceName == "" {
+		// parameter missing or empty value in query
+		return c.JSON(JSONResult{
+			Code:    fiber.StatusBadRequest,
+			Message: "missing or empty resource name in query",
+			Data:    nil,
+		})
+	}
+
+	err := w.service.UnlockResource(resourceName)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(err)
+	}
+
 	return c.JSON(
 		JSONResultSuccess{
 			Code:    fiber.StatusOK,

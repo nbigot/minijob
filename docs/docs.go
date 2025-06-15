@@ -398,22 +398,22 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/jobs/topics": {
-            "get": {
-                "description": "Get jobs topics",
+        "/api/v1/jobs/queued": {
+            "delete": {
+                "description": "Delete queued jobs",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Jobs"
                 ],
-                "summary": "Get jobs topics",
-                "operationId": "jobs-topics",
+                "summary": "Delete queued jobs",
+                "operationId": "jobs-delete-queued",
                 "responses": {
                     "200": {
                         "description": "successful operation",
                         "schema": {
-                            "$ref": "#/definitions/web.JSONResultGetJobsTopics"
+                            "$ref": "#/definitions/web.JSONResultSuccess"
                         }
                     }
                 }
@@ -435,6 +435,27 @@ const docTemplate = `{
                         "description": "successful operation",
                         "schema": {
                             "$ref": "#/definitions/web.JSONResultGetJobsMetrics"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/resource/{resourceName}/unlock": {
+            "post": {
+                "description": "Unlock a single resource",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Resources"
+                ],
+                "summary": "Unlock a single resource",
+                "operationId": "resource-unlock",
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultSuccess"
                         }
                     }
                 }
@@ -477,6 +498,48 @@ const docTemplate = `{
                         "description": "successful operation",
                         "schema": {
                             "$ref": "#/definitions/web.JSONResultSuccess"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/topics": {
+            "get": {
+                "description": "Get jobs topics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Topics"
+                ],
+                "summary": "Get jobs topics",
+                "operationId": "jobs-topics",
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultGetTopics"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/topics/stats": {
+            "get": {
+                "description": "Get topics stats",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Topics"
+                ],
+                "summary": "Get topics stats",
+                "operationId": "topics-stats",
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultGetTopicsStats"
                         }
                     }
                 }
@@ -813,6 +876,35 @@ const docTemplate = `{
                 }
             }
         },
+        "metrics.TopicMetrics": {
+            "type": "object",
+            "properties": {
+                "activeJobs": {
+                    "description": "number of active jobs in the topic",
+                    "type": "integer"
+                },
+                "averageDuration": {
+                    "description": "average duration of jobs in the topic (in seconds)",
+                    "type": "number"
+                },
+                "percentJobs": {
+                    "description": "percentage of jobs in the topic (0.0 - 100.0)",
+                    "type": "number"
+                },
+                "successRate": {
+                    "description": "success rate of jobs in the topic (0.0 - 1.0)",
+                    "type": "number"
+                },
+                "topicName": {
+                    "description": "name of the topic",
+                    "type": "string"
+                },
+                "totalJobs": {
+                    "description": "total number of jobs in the topic",
+                    "type": "integer"
+                }
+            }
+        },
         "web.JSONResultCloneJob": {
             "type": "object",
             "properties": {
@@ -927,28 +1019,6 @@ const docTemplate = `{
                 }
             }
         },
-        "web.JSONResultGetJobsTopics": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "description": "The result code",
-                    "type": "integer",
-                    "example": 200
-                },
-                "message": {
-                    "description": "The result message",
-                    "type": "string",
-                    "example": "success"
-                },
-                "topics": {
-                    "description": "The job topics",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
         "web.JSONResultGetLockedResources": {
             "type": "object",
             "properties": {
@@ -990,6 +1060,50 @@ const docTemplate = `{
                             "$ref": "#/definitions/web.TopicOldJobsMap"
                         }
                     ]
+                }
+            }
+        },
+        "web.JSONResultGetTopics": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer",
+                    "example": 200
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string",
+                    "example": "success"
+                },
+                "topics": {
+                    "description": "The job topics",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "web.JSONResultGetTopicsStats": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer",
+                    "example": 200
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string",
+                    "example": "success"
+                },
+                "topics": {
+                    "description": "The job topics with metrics",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/metrics.TopicMetrics"
+                    }
                 }
             }
         },
