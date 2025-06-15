@@ -19,6 +19,12 @@ type TopicMetrics struct {
 	AverageDuration float64 `json:"averageDuration"` // average duration of jobs in the topic (in seconds)
 }
 
+// Internal struct to track cumulative data for completed jobs
+type TopicCompletedJobStats struct {
+	CompletedJobsCount   uint  `json:"completedJobsCount"`   // total number of completed jobs (succeeded + failed + canceled)
+	CumulativeDurationMs int64 `json:"cumulativeDurationMs"` // cumulative duration in milliseconds for completed jobs
+}
+
 // note: a counter represents a continuously increasing value, unlike a gauge, and does not go down
 type JobMetrics struct {
 	ResourcesLockedCount uint `json:"resourcesLockedCount"` // current number of locked resources
@@ -56,11 +62,13 @@ type JobMetricsTopicStatsMap map[string][]TopicMetrics
 
 type ServiceMetrics struct {
 	// implements IServiceMetrics & IServiceEventObserver interfaces
-	JobMetricsByTopicMap sync.Map          `json:"jobsTopics"` // metrics by topic ([string]*JobMetrics)
-	Topics               []string          // list of topics (cache)
-	Metrics              PrometheusMetrics // metrics for prometheus
-	enabledCollect       bool              // enable metrics collection
-	mu                   sync.Mutex        // mutex
+	JobMetricsByTopicMap      sync.Map          `json:"jobsTopics"`         // metrics by topic ([string]*JobMetrics)
+	TopicMetricsByTopicMap    sync.Map          `json:"topicsMetrics"`      // pre-calculated topic metrics by topic ([string]*TopicMetrics)
+	CompletedJobsStatsByTopic sync.Map          `json:"completedJobsStats"` // completed jobs stats by topic ([string]*TopicCompletedJobStats)
+	Topics                    []string          // list of topics (cache)
+	Metrics                   PrometheusMetrics // metrics for prometheus
+	enabledCollect            bool              // enable metrics collection
+	mu                        sync.Mutex        // mutex
 }
 
 func (s *ServiceMetrics) Init() error {
@@ -73,6 +81,55 @@ func (s *ServiceMetrics) Shutdown() {
 
 func (s *ServiceMetrics) GetFiberPrometheus() *fiberprometheus.FiberPrometheus {
 	return s.Metrics.FiberPrometheus
+}
+
+// GetTopicMetrics returns the TopicMetrics for a given topic, creating it if it doesn't exist
+func (s *ServiceMetrics) GetTopicMetrics(topic string) *TopicMetrics {
+	topicMetrics, exists := s.TopicMetricsByTopicMap.Load(topic)
+	if !exists {
+		return s.AddTopicMetrics(topic)
+	}
+	return topicMetrics.(*TopicMetrics)
+}
+
+// AddTopicMetrics creates and stores new TopicMetrics for a topic
+func (s *ServiceMetrics) AddTopicMetrics(topic string) *TopicMetrics {
+	topicMetrics := &TopicMetrics{
+		TopicName:       topic,
+		TotalJobs:       0,
+		PercentJobs:     0.0,
+		ActiveJobs:      0,
+		SuccessRate:     0.0,
+		AverageDuration: 0.0,
+	}
+	s.TopicMetricsByTopicMap.Store(topic, topicMetrics)
+	return topicMetrics
+}
+
+// GetCompletedJobStats returns the completed job stats for a given topic, creating it if it doesn't exist
+func (s *ServiceMetrics) GetCompletedJobStats(topic string) *TopicCompletedJobStats {
+	stats, exists := s.CompletedJobsStatsByTopic.Load(topic)
+	if !exists {
+		return s.AddCompletedJobStats(topic)
+	}
+	return stats.(*TopicCompletedJobStats)
+}
+
+// AddCompletedJobStats creates and stores new TopicCompletedJobStats for a topic
+func (s *ServiceMetrics) AddCompletedJobStats(topic string) *TopicCompletedJobStats {
+	stats := &TopicCompletedJobStats{
+		CompletedJobsCount:   0,
+		CumulativeDurationMs: 0,
+	}
+	s.CompletedJobsStatsByTopic.Store(topic, stats)
+	return stats
+}
+
+// UpdateCompletedJobStats updates the cumulative stats when a job completes
+func (s *ServiceMetrics) UpdateCompletedJobStats(topic string, durationMs int64) {
+	stats := s.GetCompletedJobStats(topic)
+	stats.CompletedJobsCount++
+	stats.CumulativeDurationMs += durationMs
 }
 
 func (s *ServiceMetrics) OnJobStateChange(previousState job.JobState, newState job.JobState, jobMetrics *JobMetrics) {
@@ -170,6 +227,11 @@ func (s *ServiceMetrics) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 	newState := j.GetState()
 	jobMetrics := s.GetMetricByTopic(j.Topic)
 	s.OnJobStateChange(previousState, newState, jobMetrics)
+
+	// Update TopicMetrics in real-time
+	jobDurationMs := j.GetDurationMsSinceLastAndFirstEvent()
+	s.UpdateTopicMetrics(j.Topic, previousState, newState, jobDurationMs)
+
 	s.Metrics.OnEvent(
 		event.ServiceEvent{
 			Type:        ev,
@@ -214,16 +276,22 @@ func (s *ServiceMetrics) GetTopicsStats() []TopicMetrics {
 	defer s.mu.Unlock()
 
 	stats := []TopicMetrics{}
+	totalJobsAllTopics := uint(0)
+
+	// First pass: collect pre-calculated metrics and calculate total jobs
 	for _, topic := range s.Topics {
-		jobMetrics := s.GetMetricByTopic(topic)
-		stats = append(stats, TopicMetrics{
-			TopicName:       topic,
-			TotalJobs:       jobMetrics.JobsExisting + jobMetrics.JobsCounterDeleted,
-			PercentJobs:     0.0, // TODO: will be computed later
-			ActiveJobs:      jobMetrics.JobsStatusRunning + jobMetrics.JobsStatusPending + jobMetrics.JobsStatusQueued,
-			SuccessRate:     0.0, // TODO: will be computed later
-			AverageDuration: 0.0, // TODO: will be computed later
-		})
+		topicMetrics := s.GetTopicMetrics(topic)
+		stats = append(stats, *topicMetrics)
+		totalJobsAllTopics += topicMetrics.TotalJobs
+	}
+
+	// Second pass: calculate percentages
+	for i := range stats {
+		if totalJobsAllTopics > 0 {
+			stats[i].PercentJobs = (float64(stats[i].TotalJobs) / float64(totalJobsAllTopics)) * 100.0
+		} else {
+			stats[i].PercentJobs = 0.0
+		}
 	}
 
 	return stats
@@ -257,6 +325,11 @@ func (s *ServiceMetrics) AddTopic(topic string) *JobMetrics {
 	jobMetrics := &JobMetrics{}
 	s.JobMetricsByTopicMap.Store(topic, jobMetrics)
 	s.Topics = append(s.Topics, topic)
+
+	// Also initialize TopicMetrics and CompletedJobStats for the new topic
+	s.AddTopicMetrics(topic)
+	s.AddCompletedJobStats(topic)
+
 	return jobMetrics
 }
 
@@ -328,11 +401,68 @@ func (s *ServiceMetrics) GetJobMetricsByTopicMap() JobMetricsTopicMap {
 	return jobMetricsTopicMap
 }
 
+// UpdateTopicMetrics updates the pre-calculated TopicMetrics for a given topic and job
+func (s *ServiceMetrics) UpdateTopicMetrics(topic string, previousState job.JobState, newState job.JobState, jobDurationMs int64) {
+	if !s.enabledCollect {
+		return
+	}
+
+	topicMetrics := s.GetTopicMetrics(topic)
+
+	// Update active jobs count
+	switch previousState {
+	case job.JobPending, job.JobQueued, job.JobRunning:
+		topicMetrics.ActiveJobs--
+	}
+
+	switch newState {
+	case job.JobPending, job.JobQueued, job.JobRunning:
+		topicMetrics.ActiveJobs++
+	case job.JobCreated:
+		topicMetrics.TotalJobs++
+	case job.JobDeleted:
+		topicMetrics.TotalJobs--
+	}
+
+	// Update completed job stats if job just completed
+	if isJobCompleted(newState) && !isJobCompleted(previousState) && jobDurationMs > 0 {
+		s.UpdateCompletedJobStats(topic, jobDurationMs)
+
+		// Update average duration
+		completedStats := s.GetCompletedJobStats(topic)
+		if completedStats.CompletedJobsCount > 0 {
+			avgDurationMs := completedStats.CumulativeDurationMs / int64(completedStats.CompletedJobsCount)
+			topicMetrics.AverageDuration = float64(avgDurationMs) / 1000.0 // convert to seconds
+		}
+	}
+
+	// Update success rate
+	jobMetrics := s.GetMetricByTopic(topic)
+	completedJobs := jobMetrics.JobsStatusSucceeded + jobMetrics.JobsStatusFailed + jobMetrics.JobsStatusCanceled
+	if completedJobs > 0 {
+		topicMetrics.SuccessRate = float64(jobMetrics.JobsStatusSucceeded) / float64(completedJobs)
+	} else {
+		topicMetrics.SuccessRate = 0.0
+	}
+}
+
+// isJobCompleted checks if a job state represents a completed job
+func isJobCompleted(state job.JobState) bool {
+	switch state {
+	case job.JobSucceeded, job.JobFailed, job.JobCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
 func NewSericeMetrics(enabledCollect bool) *ServiceMetrics {
 	return &ServiceMetrics{
-		JobMetricsByTopicMap: sync.Map{},
-		Topics:               make([]string, 0),
-		enabledCollect:       enabledCollect,
-		Metrics:              PrometheusMetrics{},
+		JobMetricsByTopicMap:      sync.Map{},
+		TopicMetricsByTopicMap:    sync.Map{},
+		CompletedJobsStatsByTopic: sync.Map{},
+		Topics:                    make([]string, 0),
+		enabledCollect:            enabledCollect,
+		Metrics:                   PrometheusMetrics{},
 	}
 }

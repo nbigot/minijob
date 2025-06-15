@@ -483,3 +483,424 @@ func TestServiceMetrics_GetJobMetricsByTopicMap(t *testing.T) {
 	metrics1.JobsExisting = 99
 	assert.Equal(t, uint(5), result[topic1][0].JobsExisting)
 }
+
+func TestServiceMetrics_GetTopicMetrics(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+
+	// Test getting metrics for non-existent topic (should create it)
+	topic := "new-topic"
+	topicMetrics := serviceMetrics.GetTopicMetrics(topic)
+
+	// Verify it was created with default values
+	assert.NotNil(t, topicMetrics)
+	assert.Equal(t, topic, topicMetrics.TopicName)
+	assert.Equal(t, uint(0), topicMetrics.TotalJobs)
+	assert.Equal(t, float64(0.0), topicMetrics.PercentJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)
+	assert.Equal(t, float64(0.0), topicMetrics.SuccessRate)
+	assert.Equal(t, float64(0.0), topicMetrics.AverageDuration)
+
+	// Test getting metrics for existing topic
+	retrievedMetrics := serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, topicMetrics, retrievedMetrics)
+}
+
+func TestServiceMetrics_GetCompletedJobStats(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+
+	// Test getting stats for non-existent topic (should create it)
+	topic := "new-topic"
+	stats := serviceMetrics.GetCompletedJobStats(topic)
+
+	// Verify it was created with default values
+	assert.NotNil(t, stats)
+	assert.Equal(t, uint(0), stats.CompletedJobsCount)
+	assert.Equal(t, int64(0), stats.CumulativeDurationMs)
+
+	// Test getting stats for existing topic
+	retrievedStats := serviceMetrics.GetCompletedJobStats(topic)
+	assert.Equal(t, stats, retrievedStats)
+}
+
+func TestServiceMetrics_UpdateCompletedJobStats(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	topic := "test-topic"
+
+	// Update stats with first job duration
+	serviceMetrics.UpdateCompletedJobStats(topic, 1000) // 1 second
+
+	stats := serviceMetrics.GetCompletedJobStats(topic)
+	assert.Equal(t, uint(1), stats.CompletedJobsCount)
+	assert.Equal(t, int64(1000), stats.CumulativeDurationMs)
+
+	// Update stats with second job duration
+	serviceMetrics.UpdateCompletedJobStats(topic, 2000) // 2 seconds
+
+	stats = serviceMetrics.GetCompletedJobStats(topic)
+	assert.Equal(t, uint(2), stats.CompletedJobsCount)
+	assert.Equal(t, int64(3000), stats.CumulativeDurationMs)
+}
+
+func TestServiceMetrics_UpdateTopicMetrics(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	topic := "test-topic"
+
+	// Initialize topic
+	jobMetrics := serviceMetrics.AddTopic(topic)
+
+	// Test job creation
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobCreated, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+
+	topicMetrics := serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)
+
+	// Test job becoming active (pending)
+	serviceMetrics.OnJobStateChange(job.JobCreated, job.JobPending, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobCreated, job.JobPending, 0)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(1), topicMetrics.ActiveJobs)
+
+	// Test job becoming running
+	serviceMetrics.OnJobStateChange(job.JobPending, job.JobRunning, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobPending, job.JobRunning, 0)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(1), topicMetrics.ActiveJobs)
+
+	// Test job completion with duration
+	durationMs := int64(5000) // 5 seconds
+	serviceMetrics.OnJobStateChange(job.JobRunning, job.JobSucceeded, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobRunning, job.JobSucceeded, durationMs)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)
+	assert.Equal(t, float64(5.0), topicMetrics.AverageDuration) // 5000ms = 5.0s
+	assert.Equal(t, float64(1.0), topicMetrics.SuccessRate)     // 1 success / 1 completed = 100%
+
+	// Add a failed job to test success rate calculation
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobCreated, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+	serviceMetrics.OnJobStateChange(job.JobCreated, job.JobRunning, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobCreated, job.JobRunning, 0)
+	serviceMetrics.OnJobStateChange(job.JobRunning, job.JobFailed, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobRunning, job.JobFailed, 3000) // 3 seconds
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(2), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)
+	assert.Equal(t, float64(4.0), topicMetrics.AverageDuration) // (5000+3000)/2 = 4000ms = 4.0s
+	assert.Equal(t, float64(0.5), topicMetrics.SuccessRate)     // 1 success / 2 completed = 50%
+
+	// Test job deletion
+	serviceMetrics.OnJobStateChange(job.JobFailed, job.JobDeleted, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobFailed, job.JobDeleted, 0)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs) // Should decrease total jobs
+}
+
+func TestServiceMetrics_UpdateTopicMetrics_DisabledCollection(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(false) // Collection disabled
+	topic := "test-topic"
+
+	// Should return early when collection is disabled
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+
+	// Topic should not be created
+	_, exists := serviceMetrics.TopicMetricsByTopicMap.Load(topic)
+	assert.False(t, exists)
+}
+
+func TestServiceMetrics_GetTopicsStats_SingleTopic(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	topic := "test-topic"
+	jobMetrics := serviceMetrics.AddTopic(topic)
+
+	// Create some job activity
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobCreated, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+	serviceMetrics.OnJobStateChange(job.JobCreated, job.JobRunning, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobCreated, job.JobRunning, 0)
+	serviceMetrics.OnJobStateChange(job.JobRunning, job.JobSucceeded, jobMetrics)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobRunning, job.JobSucceeded, 5000)
+
+	stats := serviceMetrics.GetTopicsStats()
+
+	assert.Equal(t, 1, len(stats))
+	assert.Equal(t, topic, stats[0].TopicName)
+	assert.Equal(t, uint(1), stats[0].TotalJobs)
+	assert.Equal(t, float64(100.0), stats[0].PercentJobs) // Only topic, so 100%
+	assert.Equal(t, uint(0), stats[0].ActiveJobs)
+	assert.Equal(t, float64(1.0), stats[0].SuccessRate)
+	assert.Equal(t, float64(5.0), stats[0].AverageDuration)
+}
+
+func TestServiceMetrics_GetTopicsStats_MultipleTopics(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	// Create two topics with different job counts
+	topic1 := "topic1"
+	topic2 := "topic2"
+
+	jobMetrics1 := serviceMetrics.AddTopic(topic1)
+	jobMetrics2 := serviceMetrics.AddTopic(topic2)
+
+	// Topic1: 3 jobs (2 succeeded, 1 failed)
+	for i := 0; i < 3; i++ {
+		serviceMetrics.OnJobStateChange(job.JobNoState, job.JobCreated, jobMetrics1)
+		serviceMetrics.UpdateTopicMetrics(topic1, job.JobNoState, job.JobCreated, 0)
+		serviceMetrics.OnJobStateChange(job.JobCreated, job.JobRunning, jobMetrics1)
+		serviceMetrics.UpdateTopicMetrics(topic1, job.JobCreated, job.JobRunning, 0)
+		if i < 2 {
+			serviceMetrics.OnJobStateChange(job.JobRunning, job.JobSucceeded, jobMetrics1)
+			serviceMetrics.UpdateTopicMetrics(topic1, job.JobRunning, job.JobSucceeded, int64((i+1)*1000))
+		} else {
+			serviceMetrics.OnJobStateChange(job.JobRunning, job.JobFailed, jobMetrics1)
+			serviceMetrics.UpdateTopicMetrics(topic1, job.JobRunning, job.JobFailed, 3000)
+		}
+	}
+
+	// Topic2: 1 job (1 succeeded)
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobCreated, jobMetrics2)
+	serviceMetrics.UpdateTopicMetrics(topic2, job.JobNoState, job.JobCreated, 0)
+	serviceMetrics.OnJobStateChange(job.JobCreated, job.JobRunning, jobMetrics2)
+	serviceMetrics.UpdateTopicMetrics(topic2, job.JobCreated, job.JobRunning, 0)
+	serviceMetrics.OnJobStateChange(job.JobRunning, job.JobSucceeded, jobMetrics2)
+	serviceMetrics.UpdateTopicMetrics(topic2, job.JobRunning, job.JobSucceeded, 4000)
+
+	stats := serviceMetrics.GetTopicsStats()
+
+	assert.Equal(t, 2, len(stats))
+
+	// Find stats by topic name
+	var topic1Stats, topic2Stats *TopicMetrics
+	for i := range stats {
+		if stats[i].TopicName == topic1 {
+			topic1Stats = &stats[i]
+		} else if stats[i].TopicName == topic2 {
+			topic2Stats = &stats[i]
+		}
+	}
+
+	// Verify topic1 stats
+	assert.NotNil(t, topic1Stats)
+	assert.Equal(t, uint(3), topic1Stats.TotalJobs)
+	assert.Equal(t, float64(75.0), topic1Stats.PercentJobs) // 3/4 * 100 = 75%
+	assert.Equal(t, uint(0), topic1Stats.ActiveJobs)
+	assert.Equal(t, float64(2.0/3.0), topic1Stats.SuccessRate) // 2 succeeded / 3 completed ≈ 0.667
+	assert.Equal(t, float64(2.0), topic1Stats.AverageDuration) // (1000+2000+3000)/3 = 2000ms = 2.0s
+
+	// Verify topic2 stats
+	assert.NotNil(t, topic2Stats)
+	assert.Equal(t, uint(1), topic2Stats.TotalJobs)
+	assert.Equal(t, float64(25.0), topic2Stats.PercentJobs) // 1/4 * 100 = 25%
+	assert.Equal(t, uint(0), topic2Stats.ActiveJobs)
+	assert.Equal(t, float64(1.0), topic2Stats.SuccessRate)     // 1 succeeded / 1 completed = 100%
+	assert.Equal(t, float64(4.0), topic2Stats.AverageDuration) // 4000ms = 4.0s
+}
+
+func TestServiceMetrics_GetTopicsStats_NoJobs(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+
+	stats := serviceMetrics.GetTopicsStats()
+	assert.Equal(t, 0, len(stats))
+}
+
+func TestServiceMetrics_GetTopicsStats_ActiveJobs(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	topic := "test-topic"
+	serviceMetrics.AddTopic(topic)
+
+	// Create some active jobs
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobCreated, job.JobPending, 0)
+
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+	serviceMetrics.UpdateTopicMetrics(topic, job.JobCreated, job.JobRunning, 0)
+
+	stats := serviceMetrics.GetTopicsStats()
+
+	assert.Equal(t, 1, len(stats))
+	assert.Equal(t, uint(2), stats[0].TotalJobs)
+	assert.Equal(t, uint(2), stats[0].ActiveJobs)           // Both jobs are active
+	assert.Equal(t, float64(0.0), stats[0].SuccessRate)     // No completed jobs yet
+	assert.Equal(t, float64(0.0), stats[0].AverageDuration) // No completed jobs yet
+}
+
+func TestServiceMetrics_IsJobCompleted(t *testing.T) {
+	// Test completed states
+	assert.True(t, isJobCompleted(job.JobSucceeded))
+	assert.True(t, isJobCompleted(job.JobFailed))
+	assert.True(t, isJobCompleted(job.JobCanceled))
+
+	// Test non-completed states
+	assert.False(t, isJobCompleted(job.JobNoState))
+	assert.False(t, isJobCompleted(job.JobCreated))
+	assert.False(t, isJobCompleted(job.JobPending))
+	assert.False(t, isJobCompleted(job.JobQueued))
+	assert.False(t, isJobCompleted(job.JobRunning))
+	assert.False(t, isJobCompleted(job.JobDelayed))
+	assert.False(t, isJobCompleted(job.JobHidden))
+	assert.False(t, isJobCompleted(job.JobDeleted))
+}
+
+func TestServiceMetrics_Integration_TopicMetrics(t *testing.T) {
+	// Integration test that verifies TopicMetrics are updated correctly during the full job lifecycle
+	serviceMetrics := NewSericeMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	topic := "integration-topic"
+
+	// Create a job
+	jobUUID, _ := uuid.NewV7()
+	j := &job.Job{
+		JobUUID: jobUUID,
+		Topic:   topic,
+	}
+	now := time.Now().UnixMilli()
+	j.Init(j.JobUUID, now)
+
+	// Simulate job lifecycle through NotifyJobEvent
+	j.AddHistoryEvent(job.JobEventCreate, now)
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobCreated)
+
+	// Verify initial state
+	topicMetrics := serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)
+
+	// Job becomes pending
+	j.AddHistoryEvent(job.JobEventPending, now+100)
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobPending)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(1), topicMetrics.ActiveJobs)
+
+	// Job starts running
+	j.AddHistoryEvent(job.JobEventStart, now+200)
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobStarted)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(1), topicMetrics.ActiveJobs)
+
+	// Job succeeds
+	j.AddHistoryEvent(job.JobEventSuccess, now+5200) // 5 second duration from start
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobSucceeded)
+
+	topicMetrics = serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, uint(1), topicMetrics.TotalJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)
+	assert.Equal(t, float64(1.0), topicMetrics.SuccessRate)
+	assert.InDelta(t, float64(5.2), topicMetrics.AverageDuration, 0.1) // Allow for slight timing differences
+
+	// Verify GetTopicsStats returns correct percentages
+	stats := serviceMetrics.GetTopicsStats()
+	assert.Equal(t, 1, len(stats))
+	assert.Equal(t, float64(100.0), stats[0].PercentJobs)
+}
+
+func TestServiceMetrics_AddTopic_InitializesAllMaps(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	topic := "new-topic"
+
+	jobMetrics := serviceMetrics.AddTopic(topic)
+
+	// Verify JobMetrics was created
+	assert.NotNil(t, jobMetrics)
+	assert.Contains(t, serviceMetrics.GetTopics(), topic)
+
+	// Verify TopicMetrics was initialized
+	topicMetrics := serviceMetrics.GetTopicMetrics(topic)
+	assert.NotNil(t, topicMetrics)
+	assert.Equal(t, topic, topicMetrics.TopicName)
+
+	// Verify CompletedJobStats was initialized
+	completedStats := serviceMetrics.GetCompletedJobStats(topic)
+	assert.NotNil(t, completedStats)
+	assert.Equal(t, uint(0), completedStats.CompletedJobsCount)
+}
+
+func TestServiceMetrics_TopicMetrics_ThreadSafety(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	topic := "concurrent-topic"
+	jobMetrics := serviceMetrics.AddTopic(topic)
+
+	// Test concurrent updates to TopicMetrics
+	var wg sync.WaitGroup
+	numGoroutines := 10
+	jobsPerGoroutine := 5
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+			for j := 0; j < jobsPerGoroutine; j++ {
+				// Simulate job lifecycle with proper locking
+				serviceMetrics.mu.Lock()
+				serviceMetrics.OnJobStateChange(job.JobNoState, job.JobCreated, jobMetrics)
+				serviceMetrics.UpdateTopicMetrics(topic, job.JobNoState, job.JobCreated, 0)
+				serviceMetrics.OnJobStateChange(job.JobCreated, job.JobRunning, jobMetrics)
+				serviceMetrics.UpdateTopicMetrics(topic, job.JobCreated, job.JobRunning, 0)
+				serviceMetrics.OnJobStateChange(job.JobRunning, job.JobSucceeded, jobMetrics)
+				serviceMetrics.UpdateTopicMetrics(topic, job.JobRunning, job.JobSucceeded, int64(1000*(goroutineID+1)))
+				serviceMetrics.mu.Unlock()
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify final state
+	topicMetrics := serviceMetrics.GetTopicMetrics(topic)
+	expectedTotalJobs := uint(numGoroutines * jobsPerGoroutine)
+
+	assert.Equal(t, expectedTotalJobs, topicMetrics.TotalJobs)
+	assert.Equal(t, uint(0), topicMetrics.ActiveJobs)           // All jobs completed
+	assert.Equal(t, float64(1.0), topicMetrics.SuccessRate)     // All succeeded
+	assert.Greater(t, topicMetrics.AverageDuration, float64(0)) // Should have some average duration
+
+	// Verify completed job stats
+	completedStats := serviceMetrics.GetCompletedJobStats(topic)
+	assert.Equal(t, expectedTotalJobs, completedStats.CompletedJobsCount)
+	assert.Greater(t, completedStats.CumulativeDurationMs, int64(0))
+}
+
+func TestServiceMetrics_TopicMetrics_ZeroDivision(t *testing.T) {
+	serviceMetrics := NewSericeMetrics(true)
+	topic := "zero-test-topic"
+
+	serviceMetrics.AddTopic(topic)
+
+	// Test with no completed jobs - should not cause division by zero
+	topicMetrics := serviceMetrics.GetTopicMetrics(topic)
+	assert.Equal(t, float64(0.0), topicMetrics.SuccessRate)
+	assert.Equal(t, float64(0.0), topicMetrics.AverageDuration)
+
+	// Test GetTopicsStats with no jobs - should not cause division by zero
+	stats := serviceMetrics.GetTopicsStats()
+	assert.Equal(t, 1, len(stats))
+	assert.Equal(t, float64(0.0), stats[0].PercentJobs)
+}
