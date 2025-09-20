@@ -50,17 +50,14 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiJob.Delete("/:"+constants.JobUuidParam, w.DeleteJob)
 
 	apiJobs := api.Group("/jobs")
-	apiJobs.Get("/", w.GetAllJobs)
+	apiJobs.Get("/", w.GetJobs)
+	apiJobs.Get("/all", w.GetAllJobs)
 	apiJobs.Get("/oldest", w.GetOldestJobs)
 	apiJobs.Delete("/queued", w.DeleteQueuedJobs)
 	apiJobs.Delete("/", w.DeleteAllJobs)
 
 	apiTopics := api.Group("/topics")
 	apiTopics.Get("/", w.GetTopics)
-	apiTopics.Get("/stats", w.GetTopicsStats)
-
-	apiObservability := api.Group("/observability")
-	apiObservability.Get("/metrics", w.GetJobsMetrics)
 
 	apiResources := api.Group("/resources")
 	apiResources.Get("/", w.GetLockedResources)
@@ -72,6 +69,17 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiAdmin := api.Group("/admin")
 	apiAdmin.Post("/server/shutdown", w.ApiServerShutdown)
 	apiAdmin.Post("/server/restart", w.ApiServerRestart)
+
+	if w.appConfig.WebServer.Metrics.Enable {
+		apiObservability := api.Group("/metrics")
+		apiObservability.Get("/jobs", w.GetJobsMetrics)
+		apiObservability.Get("/jobs/recent", w.GetJobsMetrics)  // TODO
+		apiObservability.Get("/jobs/stalled", w.GetJobsMetrics) // TODO
+		apiObservability.Get("/jobs/stats", w.GetJobsMetrics)   // TODO
+		apiObservability.Get("/resources", w.GetResourcesMetrics)
+		apiObservability.Get("/stats", w.GetJobsMetrics) // TODO
+		apiObservability.Get("/topics", w.GetTopicsStats)
+	}
 
 	// Add healthcheck
 	app.Get("/ping", w.Ping)

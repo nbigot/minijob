@@ -12,6 +12,7 @@ type IServiceMetrics interface {
 	GetFiberPrometheus() *fiberprometheus.FiberPrometheus
 	GetTopics() []string
 	GetTopicsStats() []TopicMetrics
+	GetResourcesMetrics() []ResourceMetrics
 	GetMetricByTopic(topic string) *JobMetrics
 	NotifyEvent(event.ServiceEventType)
 	NotifyTopicEvent(ev event.ServiceEventType, topic string)

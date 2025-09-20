@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1525,4 +1526,229 @@ func CreateAndInitService(conf *config.Config) (*Service, error) {
 	)
 
 	return svc, nil
+}
+
+type GetJobsRequest struct {
+	Page   int    // page number (1-based)
+	Limit  int    // number of jobs per page
+	Status string // filter by job status
+	Topic  string // filter by topic
+	Sort   string // sort order
+	Search string // search by job ID
+}
+
+type GetJobsResponse struct {
+	Jobs       []*job.Job `json:"jobs"`
+	Total      int        `json:"total"`
+	Page       int        `json:"page"`
+	Limit      int        `json:"limit"`
+	TotalPages int        `json:"total_pages"`
+}
+
+func (svc *Service) GetJobs(req *GetJobsRequest) (*GetJobsResponse, error) {
+	svc.mapMutex.RLock()
+	defer svc.mapMutex.RUnlock()
+
+	// Convert jobs map to slice for processing
+	allJobs := make([]*job.Job, 0, len(svc.jobs))
+	for _, j := range svc.jobs {
+		allJobs = append(allJobs, j)
+	}
+
+	// Apply filters
+	filteredJobs := svc.filterJobs(allJobs, req)
+
+	// Apply sorting
+	svc.sortJobs(filteredJobs, req.Sort)
+
+	// Calculate pagination
+	total := len(filteredJobs)
+	totalPages := (total + req.Limit - 1) / req.Limit
+	if req.Limit <= 0 {
+		totalPages = 1
+	}
+
+	// Apply pagination
+	start := (req.Page - 1) * req.Limit
+	end := start + req.Limit
+	if start < 0 {
+		start = 0
+	}
+	if end > total {
+		end = total
+	}
+
+	var paginatedJobs []*job.Job
+	if start < total {
+		paginatedJobs = filteredJobs[start:end]
+	} else {
+		paginatedJobs = []*job.Job{}
+	}
+
+	return &GetJobsResponse{
+		Jobs:       paginatedJobs,
+		Total:      total,
+		Page:       req.Page,
+		Limit:      req.Limit,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (svc *Service) filterJobs(jobs []*job.Job, req *GetJobsRequest) []*job.Job {
+	filtered := make([]*job.Job, 0, len(jobs))
+
+	for _, j := range jobs {
+		// Filter by status
+		if req.Status != "" {
+			targetState := stringToJobState(req.Status)
+			if targetState == job.JobNoState || j.GetState() != targetState {
+				continue
+			}
+		}
+
+		// Filter by topic
+		if req.Topic != "" && j.Topic != req.Topic {
+			continue
+		}
+
+		// Filter by search (job ID)
+		if req.Search != "" {
+			jobID := j.JobUUID.String()
+			if !contains(jobID, req.Search) {
+				continue
+			}
+		}
+
+		filtered = append(filtered, j)
+	}
+
+	return filtered
+}
+
+// stringToJobState converts a string status to JobState
+func stringToJobState(status string) job.JobState {
+	switch strings.ToLower(status) {
+	case "created":
+		return job.JobCreated
+	case "delayed":
+		return job.JobDelayed
+	case "pending":
+		return job.JobPending
+	case "queued":
+		return job.JobQueued
+	case "running":
+		return job.JobRunning
+	case "succeeded":
+		return job.JobSucceeded
+	case "failed":
+		return job.JobFailed
+	case "canceled":
+		return job.JobCanceled
+	case "deleted":
+		return job.JobDeleted
+	case "hidden":
+		return job.JobHidden
+	default:
+		return job.JobNoState
+	}
+}
+
+func (svc *Service) sortJobs(jobs []*job.Job, sortParam string) {
+	if sortParam == "" {
+		sortParam = "created_desc" // Default sort
+	}
+
+	// Parse sort criteria
+	sortCriteria := strings.Split(sortParam, ",")
+	for i := range sortCriteria {
+		sortCriteria[i] = strings.TrimSpace(sortCriteria[i])
+	}
+
+	sort.Slice(jobs, func(i, j int) bool {
+		for _, criterion := range sortCriteria {
+			var result int
+
+			switch criterion {
+			case "created_asc":
+				if jobs[i].GetCreationTimestamp() < jobs[j].GetCreationTimestamp() {
+					return true
+				} else if jobs[i].GetCreationTimestamp() > jobs[j].GetCreationTimestamp() {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "created_desc":
+				if jobs[i].GetCreationTimestamp() > jobs[j].GetCreationTimestamp() {
+					return true
+				} else if jobs[i].GetCreationTimestamp() < jobs[j].GetCreationTimestamp() {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "priority_asc":
+				if jobs[i].Priority < jobs[j].Priority {
+					return true
+				} else if jobs[i].Priority > jobs[j].Priority {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "priority_desc":
+				if jobs[i].Priority > jobs[j].Priority {
+					return true
+				} else if jobs[i].Priority < jobs[j].Priority {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "updated_asc":
+				if jobs[i].GetLastUpdateDate() < jobs[j].GetLastUpdateDate() {
+					return true
+				} else if jobs[i].GetLastUpdateDate() > jobs[j].GetLastUpdateDate() {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "updated_desc":
+				if jobs[i].GetLastUpdateDate() > jobs[j].GetLastUpdateDate() {
+					return true
+				} else if jobs[i].GetLastUpdateDate() < jobs[j].GetLastUpdateDate() {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "topic_asc":
+				result = strings.Compare(jobs[i].Topic, jobs[j].Topic)
+				if result < 0 {
+					return true
+				} else if result > 0 {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			case "topic_desc":
+				result = strings.Compare(jobs[j].Topic, jobs[i].Topic)
+				if result < 0 {
+					return true
+				} else if result > 0 {
+					return false
+				}
+				// Equal, continue to next criterion
+
+			default:
+				// Unknown criterion, skip to next one
+				continue
+			}
+		}
+
+		// All criteria were equal, maintain stable sort by using creation timestamp as final fallback
+		return jobs[i].GetCreationTimestamp() < jobs[j].GetCreationTimestamp()
+	})
+}
+
+// Helper function for case-insensitive string contains
+func contains(s, substr string) bool {
+	return len(substr) == 0 || len(s) >= len(substr) &&
+		(s == substr || len(s) > len(substr) &&
+			strings.Contains(strings.ToLower(s), strings.ToLower(substr)))
 }

@@ -27,6 +27,7 @@ type IService interface {
 	LoadJobs() error
 	GetJob(job.JobUUID) (*job.Job, error)
 	GetAllJobs() []*job.Job
+	GetJobs(*GetJobsRequest) (*GetJobsResponse, error)
 	CreateJob(payload []byte) (*job.Job, error)
 	PullJobs(*RequestPullJobs) (*ResponsePullJobs, error)
 	StartJob(job.JobUUID, *RequestPullJobs) error

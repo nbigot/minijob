@@ -80,7 +80,7 @@ type JobMap = map[JobUUID]*Job
 // JobRequest is the request to create a job, it is used to create a job from a http request
 type JobRequest struct {
 	Topic         string        `json:"topic" example:"default"`                                  // Topic is the topic name for which the job has been created (optional)
-	Priority      int8          `json:"priority" example:0`                                       // Priority is the priority of the job (optional)
+	Priority      int8          `json:"priority" example:"0"`                                     // Priority is the priority of the job (optional)
 	JobProperties JobProperties `json:"properties" validate:"required"`                           // Properties is the job properties (required)
 	LockResources ResourceList  `json:"lockResources"`                                            // LockResources is the list of resources to lock (optional)
 	UserAgent     string        `json:"userAgent" example:"myJobProducerName"`                    // UserAgent is the user agent (or program name) that make the request (optional)
@@ -88,9 +88,9 @@ type JobRequest struct {
 	Name          string        `json:"name" example:"myJobName01"`                               // Name is the name of the job (optional)
 	SessionId     string        `json:"sessionId" example:"6e70464d-85cf-431d-a9c9-a1f9c0ac82dc"` // SessionId is the session identifier of the requester (optional)
 	TraceId       string        `json:"traceId" example:"e7b46b16-c971-464e-8a47-c791be0ce2ed"`   // TraceId is the trace identifier of the job (optional)
-	DebugMode     bool          `json:"debugMode" example:false`                                  // DebugMode is the debug flag of the job (optional)
+	DebugMode     bool          `json:"debugMode" example:"false"`                                // DebugMode is the debug flag of the job (optional)
 	StartAfter    int64         `json:"startAfter"`                                               // Timestamp (in milliseconds) to start the job after
-	Delay         int64         `json:"delay" example:0`                                          // Delay (in seconds) to wait before starting the job
+	Delay         int64         `json:"delay" example:"0"`                                        // Delay (in seconds) to wait before starting the job
 }
 
 func (j Job) ToJSON() (string, error) {
@@ -238,6 +238,23 @@ func (j *Job) GetCountLockResources() uint {
 	switch j.state {
 	case JobQueued, JobRunning:
 		return uint(len(j.LockResources))
+	default:
+		return 0
+	}
+}
+
+func (j *Job) GetQueuedOrRunningTimestamp() int64 {
+	// Get the unix epoch in seconds since the job is in a running or queued state
+	switch j.state {
+	case JobQueued, JobRunning:
+		// parse all the history events (in reverse order: from the most recent to the least recent) to find the first event of type JobEventEnqueue or JobEventStart
+		for i := len(j.History) - 1; i >= 0; i-- {
+			if j.History[i].EventType == JobEventEnqueue || j.History[i].EventType == JobEventStart {
+				return j.History[i].Timestamp / 1000 // convert milliseconds to seconds
+			}
+		}
+		// if no such event is found, return 0
+		return 0
 	default:
 		return 0
 	}

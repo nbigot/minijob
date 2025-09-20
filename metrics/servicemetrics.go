@@ -10,6 +10,14 @@ import (
 	"github.com/nbigot/minijob/job"
 )
 
+type ResourceMetrics struct {
+	ResourceName string      `json:"resourceName"` // name of the resource
+	JobUUID      job.JobUUID `json:"jobUuid"`      // UUID of the job that locked the resource
+	Topic        string      `json:"topic"`        // topic of the job that locked the resource
+	StartTime    int64       `json:"startTime"`    // begin time when the resource was locked in seconds
+	LockDuration int64       `json:"lockDuration"` // lock duration in seconds
+}
+
 type TopicMetrics struct {
 	TopicName       string  `json:"topicName"`       // name of the topic
 	TotalJobs       uint    `json:"totalJobs"`       // total number of jobs in the topic
@@ -60,11 +68,14 @@ type JobMetricsTopicMap map[string][]JobMetrics
 
 type JobMetricsTopicStatsMap map[string][]TopicMetrics
 
+type JobMetricsResourceStatsMap map[string][]ResourceMetrics
+
 type ServiceMetrics struct {
 	// implements IServiceMetrics & IServiceEventObserver interfaces
 	JobMetricsByTopicMap      sync.Map          `json:"jobsTopics"`         // metrics by topic ([string]*JobMetrics)
 	TopicMetricsByTopicMap    sync.Map          `json:"topicsMetrics"`      // pre-calculated topic metrics by topic ([string]*TopicMetrics)
 	CompletedJobsStatsByTopic sync.Map          `json:"completedJobsStats"` // completed jobs stats by topic ([string]*TopicCompletedJobStats)
+	ResourceMetricsMap        sync.Map          `json:"resourcesMetrics"`   // metrics by resource ([string]*ResourceMetrics)
 	Topics                    []string          // list of topics (cache)
 	Metrics                   PrometheusMetrics // metrics for prometheus
 	enabledCollect            bool              // enable metrics collection
@@ -232,6 +243,38 @@ func (s *ServiceMetrics) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 	jobDurationMs := j.GetDurationMsSinceLastAndFirstEvent()
 	s.UpdateTopicMetrics(j.Topic, previousState, newState, jobDurationMs)
 
+	// Update ResourceMetrics for resources locked by the job
+	if j.LockResources != nil {
+		switch newState {
+		case job.JobQueued, job.JobRunning:
+			for _, resource := range j.LockResources {
+				// Only one job can lock a resource at a time, so we can safely update
+				// the metrics
+				startTime := j.GetQueuedOrRunningTimestamp()
+				resourceMetrics := &ResourceMetrics{
+					ResourceName: resource,
+					JobUUID:      j.JobUUID,
+					Topic:        j.Topic,
+					StartTime:    startTime,
+					LockDuration: 0, // will be updated later (used by GetResourcesMetrics only)
+				}
+				s.ResourceMetricsMap.Store(resource, resourceMetrics)
+			}
+		case job.JobSucceeded, job.JobFailed, job.JobCanceled, job.JobDeleted:
+			// If the job is completed and had locked resources, remove the resource metrics
+			for _, resource := range j.LockResources {
+				// By security check if the resource exists in the map and is locked by this job
+				if resourceMetrics, ok := s.ResourceMetricsMap.Load(resource); ok {
+					rm := resourceMetrics.(*ResourceMetrics)
+					if rm.JobUUID == j.JobUUID {
+						// Remove the resource metrics
+						s.ResourceMetricsMap.Delete(resource)
+					}
+				}
+			}
+		}
+	}
+
 	s.Metrics.OnEvent(
 		event.ServiceEvent{
 			Type:        ev,
@@ -252,6 +295,25 @@ func (s *ServiceMetrics) UpdateMetricsFromJobHistory(j *job.Job) {
 		s.OnJobStateChange(previousState, newState, jobMetrics)
 		previousState = newState
 	}
+
+	// Update metrics (ResourceMetricsMap) for resources locked by the job
+	// Fisrt check if the jobs state is complient with resource locking state
+	jobState := j.GetState()
+	if jobState == job.JobQueued || jobState == job.JobRunning {
+		// Then iterate over the locked resources and update their metrics
+		for _, resource := range j.LockResources {
+			// Only one job can lock a resource at a time, so we can safely update the metrics
+			startTime := j.GetQueuedOrRunningTimestamp()
+			resourceMetrics := &ResourceMetrics{
+				ResourceName: resource,
+				JobUUID:      j.JobUUID,
+				Topic:        j.Topic,
+				StartTime:    startTime,
+				LockDuration: 0, // will be updated later (used by GetResourcesMetrics only)
+			}
+			s.ResourceMetricsMap.Store(resource, resourceMetrics)
+		}
+	}
 }
 
 func (s *ServiceMetrics) OnDeleteAllJobs() {
@@ -265,6 +327,31 @@ func (s *ServiceMetrics) OnDeleteAllJobs() {
 		jobMetrics.JobsCounterDeleted = numberOfDeletedJobs
 		return true
 	})
+
+	s.ResourceMetricsMap = sync.Map{} // clear resource metrics
+}
+
+func (s *ServiceMetrics) GetResourcesMetrics() []ResourceMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().Unix()
+	stats := []ResourceMetrics{}
+	// Compute metrics for resources that are currently locked
+	s.ResourceMetricsMap.Range(func(key, value interface{}) bool {
+		resourceName := key.(string)
+		resourceMetrics := value.(*ResourceMetrics)
+		stats = append(stats, ResourceMetrics{
+			ResourceName: resourceName,
+			JobUUID:      resourceMetrics.JobUUID,
+			Topic:        resourceMetrics.Topic,
+			StartTime:    resourceMetrics.StartTime,
+			LockDuration: now - resourceMetrics.StartTime, // in seconds
+		})
+		return true
+	})
+
+	return stats
 }
 
 func (s *ServiceMetrics) GetTopics() []string {
@@ -461,6 +548,7 @@ func NewSericeMetrics(enabledCollect bool) *ServiceMetrics {
 		JobMetricsByTopicMap:      sync.Map{},
 		TopicMetricsByTopicMap:    sync.Map{},
 		CompletedJobsStatsByTopic: sync.Map{},
+		ResourceMetricsMap:        sync.Map{},
 		Topics:                    make([]string, 0),
 		enabledCollect:            enabledCollect,
 		Metrics:                   PrometheusMetrics{},

@@ -689,9 +689,10 @@ func TestServiceMetrics_GetTopicsStats_MultipleTopics(t *testing.T) {
 	// Find stats by topic name
 	var topic1Stats, topic2Stats *TopicMetrics
 	for i := range stats {
-		if stats[i].TopicName == topic1 {
+		switch stats[i].TopicName {
+		case topic1:
 			topic1Stats = &stats[i]
-		} else if stats[i].TopicName == topic2 {
+		case topic2:
 			topic2Stats = &stats[i]
 		}
 	}

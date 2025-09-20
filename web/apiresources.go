@@ -12,7 +12,7 @@ import (
 // @Produce json
 // @Tags Resources
 // @success 200 {object} web.JSONResultGetLockedResources{} "successful operation"
-// @Router /api/v1/resources/locked [get]
+// @Router /api/v1/resources [get]
 func (w *WebAPIServer) GetLockedResources(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetLockedResources")
 
@@ -56,6 +56,7 @@ func (w *WebAPIServer) UnlockAllResources(c *fiber.Ctx) error {
 // @Produce json
 // @Tags Resources
 // @success 200 {object} web.JSONResultSuccess{} "successful operation"
+// @Failure 404 {object} web.JSONResult "resource not found"
 // @Router /api/v1/resource/{resourceName}/unlock [post]
 func (w *WebAPIServer) UnlockResource(c *fiber.Ctx) error {
 	c.Locals("metricName", "UnlockResource")
@@ -63,7 +64,7 @@ func (w *WebAPIServer) UnlockResource(c *fiber.Ctx) error {
 	if resourceName == "" {
 		// parameter missing or empty value in query
 		return c.JSON(JSONResult{
-			Code:    fiber.StatusBadRequest,
+			Code:    fiber.StatusNotFound,
 			Message: "missing or empty resource name in query",
 			Data:    nil,
 		})

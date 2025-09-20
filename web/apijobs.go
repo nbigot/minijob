@@ -20,7 +20,7 @@ import (
 // @Produce json
 // @Tags Jobs
 // @success 200 {object} web.JSONResultGetAllJobs{} "successful operation"
-// @Router /api/v1/jobs/ [get]
+// @Router /api/v1/jobs/all [get]
 func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetAllJobs")
 
@@ -32,6 +32,76 @@ func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 			Jobs:    jobs,
 		},
 	)
+}
+
+// GetJobs godoc
+// @Summary Get jobs with filtering, pagination and sorting
+// @Description Get jobs with optional filtering by status/topic, pagination, and sorting
+// @ID jobs-get-filtered
+// @Produce json
+// @Tags Jobs
+// @Param page query int false "Page number (default 1, min 1)"
+// @Param limit query int false "Number of jobs per page (default 10, min 1, max 1000)"
+// @Param status query string false "Filter by job status (created, delayed, pending, queued, running, succeeded, failed, canceled, deleted, hidden)"
+// @Param topic query string false "Filter by topic"
+// @Param sort query string false "Sort criteria, comma-separated (created_asc, created_desc, priority_asc, priority_desc, updated_asc, updated_desc, topic_asc, topic_desc)"
+// @Param search query string false "Search by job ID (partial match)"
+// @success 200 {object} web.JSONResultGetJobs{} "successful operation"
+// @Router /api/v1/jobs [get]
+func (w *WebAPIServer) GetJobs(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetJobs")
+
+	// Parse query parameters
+	page, apiErr := GetUintParameterFromQuery(c, "page", 1, 1, 10000)
+	if apiErr != nil {
+		return apiErr.HTTPResponse(c)
+	}
+
+	limit, apiErr := GetUintParameterFromQuery(c, "limit", 10, 1, 1000)
+	if apiErr != nil {
+		return apiErr.HTTPResponse(c)
+	}
+
+	status := c.Query("status")
+	topic := c.Query("topic")
+	sort := c.Query("sort")
+	search := c.Query("search")
+
+	// Create request
+	req := &service.GetJobsRequest{
+		Page:   int(page),
+		Limit:  int(limit),
+		Status: status,
+		Topic:  topic,
+		Sort:   sort,
+		Search: search,
+	}
+
+	// Get jobs from service
+	response, err := w.service.GetJobs(req)
+	if err != nil {
+		// check if type of err is apierror.APIError
+		if _, ok := err.(*apierror.APIError); ok {
+			return err.(*apierror.APIError).HTTPResponse(c)
+		}
+		apiErr := &apierror.APIError{
+			Message:  "cannot get jobs",
+			Code:     constants.ErrorCantGetJobs,
+			HttpCode: fiber.StatusInternalServerError,
+			Err:      err,
+		}
+		return apiErr.HTTPResponse(c)
+	}
+
+	return c.JSON(JSONResultGetJobs{
+		Code:       fiber.StatusOK,
+		Message:    "success",
+		Jobs:       response.Jobs,
+		Total:      uint(response.Total),
+		Page:       uint(response.Page),
+		Limit:      uint(response.Limit),
+		TotalPages: uint(response.TotalPages),
+	})
 }
 
 // DeleteQueuedJobs godoc
@@ -636,7 +706,7 @@ func (w *WebAPIServer) GetTopics(c *fiber.Ctx) error {
 // @Produce json
 // @Tags Topics
 // @success 200 {object} web.JSONResultGetTopicsStats{} "successful operation"
-// @Router /api/v1/topics/stats [get]
+// @Router /api/v1/metrics/topics [get]
 func (w *WebAPIServer) GetTopicsStats(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetTopicsStats")
 	return c.JSON(
@@ -717,4 +787,23 @@ func (w *WebAPIServer) GetOldestJobs(c *fiber.Ctx) error {
 		Message: "success",
 		Topics:  topicsResults,
 	})
+}
+
+// GetResourcesMetrics godoc
+// @Summary Get resources stats
+// @Description Get resources stats
+// @ID resources-stats
+// @Produce json
+// @Tags Resources
+// @success 200 {object} web.JSONResultGetResourcesStats{} "successful operation"
+// @Router /api/v1/metrics/resources [get]
+func (w *WebAPIServer) GetResourcesMetrics(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetResourcesMetrics")
+	return c.JSON(
+		JSONResultGetResourcesStats{
+			Code:      fiber.StatusOK,
+			Message:   "success",
+			Resources: w.service.GetMetrics().GetResourcesMetrics(),
+		},
+	)
 }

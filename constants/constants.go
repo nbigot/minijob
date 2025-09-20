@@ -14,6 +14,7 @@ const ErrorCantCancelJob = 1008
 const ErrorCantSetJobAsSuccessful = 1009
 const ErrorCantFailJob = 1010
 const ErrorCantEnqueueJob = 1011
+const ErrorCantGetJobs = 1012
 
 const ErrorInvalidIteratorUuid = 1020
 const ErrorInvalidParameterValue = 1021

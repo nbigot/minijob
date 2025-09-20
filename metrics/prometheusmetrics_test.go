@@ -312,14 +312,14 @@ func TestPrometheusMetrics_updateJobMetrics(t *testing.T) {
 
 func checkGaugeValue(t *testing.T, gauge *prometheus.GaugeVec, status, topic string, expected float64) {
 	metric := &dto.Metric{}
-	err := gauge.WithLabelValues(status, topic).(prometheus.Gauge).Write(metric)
+	err := gauge.WithLabelValues(status, topic).Write(metric)
 	require.NoError(t, err)
 	assert.Equal(t, expected, *metric.Gauge.Value, "Gauge value mismatch")
 }
 
 func checkCounterValue(t *testing.T, counter *prometheus.CounterVec, event, topic string, expected float64) {
 	metric := &dto.Metric{}
-	err := counter.WithLabelValues(event, topic).(prometheus.Counter).Write(metric)
+	err := counter.WithLabelValues(event, topic).Write(metric)
 	require.NoError(t, err)
 	assert.Equal(t, expected, *metric.Counter.Value, "Counter value mismatch")
 }

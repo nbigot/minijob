@@ -63,7 +63,14 @@ func WithPrometheus() webserver.ServerOption {
 			app := s.GetApp()
 			fp := s.GetWebAPIServer().GetFiberPrometheus()
 			fp.RegisterAt(app, "/metrics")
-			fp.SetSkipPaths([]string{"/ping", "/healthcheck", "/api/v1/admin/server/restart"}) // Optional: Remove some paths from metrics
+			fp.SetSkipPaths([]string{
+				"/ping",
+				"/healthcheck",
+				"/livez",
+				"/readyz",
+				"/api/v1/admin/server/restart",
+				"/api/v1/admin/server/shutdown",
+			}) // Optional: Remove some paths from metrics
 			_ = app.Use(fp.Middleware)
 		}
 	}
