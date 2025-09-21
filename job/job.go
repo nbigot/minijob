@@ -71,6 +71,7 @@ type Job struct {
 	DebugMode         bool          `json:"debugMode"`         // The debug flag of the job (optional)
 	VisibilityTimeout uint          `json:"visibilityTimeout"` // Duration (in seconds) to keep the job hidden from the queue after it is fetched
 	StartAfter        int64         `json:"startAfter"`        // Timestamp (in milliseconds) to start the job after
+	CallbackURL       string        `json:"callbackUrl"`       // URL to call when job completes (success or failure) (optional)
 	state             JobState      // The current state of the job
 	previousState     JobState      // The previous state of the job
 }
@@ -91,6 +92,7 @@ type JobRequest struct {
 	DebugMode     bool          `json:"debugMode" example:"false"`                                // DebugMode is the debug flag of the job (optional)
 	StartAfter    int64         `json:"startAfter"`                                               // Timestamp (in milliseconds) to start the job after
 	Delay         int64         `json:"delay" example:"0"`                                        // Delay (in seconds) to wait before starting the job
+	CallbackURL   string        `json:"callbackUrl" example:"https://api.example.com/webhook"`    // URL to call when job completes (success or failure) (optional)
 }
 
 func (j Job) ToJSON() (string, error) {
@@ -123,6 +125,33 @@ func (j *Job) GetLastUpdateDate() int64 {
 
 func (j *Job) GetState() JobState {
 	return j.state
+}
+
+func (j *Job) GetStateString() string {
+	switch j.state {
+	case JobCreated:
+		return "created"
+	case JobDelayed:
+		return "delayed"
+	case JobPending:
+		return "pending"
+	case JobQueued:
+		return "queued"
+	case JobRunning:
+		return "running"
+	case JobSucceeded:
+		return "succeeded"
+	case JobFailed:
+		return "failed"
+	case JobCanceled:
+		return "canceled"
+	case JobDeleted:
+		return "deleted"
+	case JobHidden:
+		return "hidden"
+	default:
+		return "unknown"
+	}
 }
 
 func (j *Job) GetPreviousState() JobState {
@@ -203,6 +232,7 @@ func (j *Job) Clone() *Job {
 		DebugMode:         j.DebugMode,
 		VisibilityTimeout: j.VisibilityTimeout,
 		StartAfter:        j.StartAfter,
+		CallbackURL:       j.CallbackURL,
 		state:             j.state,
 		previousState:     j.previousState,
 	}
@@ -320,6 +350,7 @@ func NewJobFromRequest(payload []byte) (*Job, error) {
 		TraceId:       req.TraceId,
 		DebugMode:     req.DebugMode,
 		StartAfter:    startAfter,
+		CallbackURL:   req.CallbackURL,
 		state:         JobNoState,
 		previousState: JobNoState,
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/nbigot/minijob/callback"
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
 	"github.com/nbigot/minijob/event"
@@ -50,6 +51,7 @@ type Service struct {
 	conf                        *config.Config                         // configuration
 	logger                      *zap.Logger                            // logger
 	resourcesManager            *ResourcesManager                      // resources manager
+	callbackService             *callback.CallbackService              // callback service for job completion notifications
 }
 
 func (svc *Service) Init() error {
@@ -68,6 +70,7 @@ func (svc *Service) Init() error {
 	if svc.conf.EventsLogger.Enable && svc.conf.EventsLogger.FilePath != "" {
 		svc.eventNotifier.Register(svc.eventLogger)
 	}
+	svc.eventNotifier.Register(svc.callbackService)
 	svc.eventNotifier.Init()
 
 	err = svc.LoadJobs()
@@ -1489,7 +1492,8 @@ func NewService(logger *zap.Logger, conf *config.Config) (*Service, error) {
 		notifChanBP:                 make(chan jobbackendprovider.Event, 1000),
 		notifyTryEnqueuePendingJobs: make(chan struct{}, 1000),
 		stopChan:                    make(chan struct{}),
-		metrics:                     metrics.NewSericeMetrics(conf.WebServer.Metrics.Enable),
+		metrics:                     metrics.NewServiceMetrics(conf.WebServer.Metrics.Enable),
+		callbackService:             callback.NewCallbackService(logger),
 		eventLogger:                 eventlogger.NewEventLoggerObserver(conf.EventsLogger.FilePath),
 		eventNotifier:               event.NewServiceEventNotifier(),
 		resourcesManager:            NewResourcesManager(logger),

@@ -13,7 +13,7 @@ import (
 
 // Tests
 func TestServiceMetrics_Init(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 
 	assert.NoError(t, err)
@@ -21,7 +21,7 @@ func TestServiceMetrics_Init(t *testing.T) {
 }
 
 func TestServiceMetrics_AddTopic(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Add a new topic
 	topic := "test-topic"
@@ -40,7 +40,7 @@ func TestServiceMetrics_AddTopic(t *testing.T) {
 }
 
 func TestServiceMetrics_GetMetricByTopic(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Get metrics for non-existent topic (should create it)
 	topic := "new-topic"
@@ -56,7 +56,7 @@ func TestServiceMetrics_GetMetricByTopic(t *testing.T) {
 }
 
 func TestServiceMetrics_OnJobStateChange(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	jobMetrics := &JobMetrics{}
 
 	// Test no-op when states are the same
@@ -81,7 +81,7 @@ func TestServiceMetrics_OnJobStateChange(t *testing.T) {
 }
 
 func TestServiceMetrics_OnDeleteAllJobs(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Create and setup a topic with some metrics
 	topic := "test-topic"
@@ -100,7 +100,7 @@ func TestServiceMetrics_OnDeleteAllJobs(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateResourcesLockedCountMetric(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	topic := "test-topic"
 
 	// Initial value should be 0
@@ -117,7 +117,7 @@ func TestServiceMetrics_UpdateResourcesLockedCountMetric(t *testing.T) {
 }
 
 func TestServiceMetrics_NotifyEvent(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Setup a topic with some metrics
 	topic := "test-topic"
@@ -134,7 +134,7 @@ func TestServiceMetrics_NotifyEvent(t *testing.T) {
 
 func TestServiceMetrics_NotifyTopicEvent(t *testing.T) {
 	// This test simply verifies the function doesn't crash
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 	topic := "test-topic"
@@ -148,7 +148,7 @@ func TestServiceMetrics_NotifyTopicEvent(t *testing.T) {
 }
 
 func TestServiceMetrics_NotifyJobEvent(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -190,7 +190,7 @@ func TestServiceMetrics_NotifyJobEvent(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateMetricsFromJobHistory(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Setup mock job
 	jobUUID, _ := uuid.NewV7()
@@ -218,7 +218,7 @@ func TestServiceMetrics_UpdateMetricsFromJobHistory(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateJobStatistics(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -286,7 +286,7 @@ func TestServiceMetrics_UpdateJobStatistics(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateJobDurationPercentiles(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	serviceMetrics.Init()
 
 	// Create jobs
@@ -400,19 +400,19 @@ func TestJobMetrics_Clear(t *testing.T) {
 	assert.Equal(t, uint(0), jobMetrics.JobsStatusSucceeded)
 }
 
-func TestNewSericeMetrics(t *testing.T) {
+func TestNewServiceMetrics(t *testing.T) {
 	// Test with collection enabled
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	assert.True(t, serviceMetrics.enabledCollect)
 	assert.Empty(t, serviceMetrics.Topics)
 
 	// Test with collection disabled
-	serviceMetrics = NewSericeMetrics(false)
+	serviceMetrics = NewServiceMetrics(false)
 	assert.Equal(t, false, serviceMetrics.enabledCollect)
 }
 
 func TestServiceMetrics_Concurrent(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	topic := "test-topic"
 
 	// Test concurrent access to metrics
@@ -438,7 +438,7 @@ func TestServiceMetrics_Concurrent(t *testing.T) {
 
 func TestServiceMetrics_GetJobMetricsByTopicMap(t *testing.T) {
 	// Initialize the service metrics
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Add some test topics with metrics
 	topic1 := "test-topic-1"
@@ -485,7 +485,7 @@ func TestServiceMetrics_GetJobMetricsByTopicMap(t *testing.T) {
 }
 
 func TestServiceMetrics_GetTopicMetrics(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Test getting metrics for non-existent topic (should create it)
 	topic := "new-topic"
@@ -506,7 +506,7 @@ func TestServiceMetrics_GetTopicMetrics(t *testing.T) {
 }
 
 func TestServiceMetrics_GetCompletedJobStats(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	// Test getting stats for non-existent topic (should create it)
 	topic := "new-topic"
@@ -523,7 +523,7 @@ func TestServiceMetrics_GetCompletedJobStats(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateCompletedJobStats(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	topic := "test-topic"
 
 	// Update stats with first job duration
@@ -542,7 +542,7 @@ func TestServiceMetrics_UpdateCompletedJobStats(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateTopicMetrics(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -609,7 +609,7 @@ func TestServiceMetrics_UpdateTopicMetrics(t *testing.T) {
 }
 
 func TestServiceMetrics_UpdateTopicMetrics_DisabledCollection(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(false) // Collection disabled
+	serviceMetrics := NewServiceMetrics(false) // Collection disabled
 	topic := "test-topic"
 
 	// Should return early when collection is disabled
@@ -621,7 +621,7 @@ func TestServiceMetrics_UpdateTopicMetrics_DisabledCollection(t *testing.T) {
 }
 
 func TestServiceMetrics_GetTopicsStats_SingleTopic(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -648,7 +648,7 @@ func TestServiceMetrics_GetTopicsStats_SingleTopic(t *testing.T) {
 }
 
 func TestServiceMetrics_GetTopicsStats_MultipleTopics(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -715,14 +715,14 @@ func TestServiceMetrics_GetTopicsStats_MultipleTopics(t *testing.T) {
 }
 
 func TestServiceMetrics_GetTopicsStats_NoJobs(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 
 	stats := serviceMetrics.GetTopicsStats()
 	assert.Equal(t, 0, len(stats))
 }
 
 func TestServiceMetrics_GetTopicsStats_ActiveJobs(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -764,7 +764,7 @@ func TestServiceMetrics_IsJobCompleted(t *testing.T) {
 
 func TestServiceMetrics_Integration_TopicMetrics(t *testing.T) {
 	// Integration test that verifies TopicMetrics are updated correctly during the full job lifecycle
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -821,7 +821,7 @@ func TestServiceMetrics_Integration_TopicMetrics(t *testing.T) {
 }
 
 func TestServiceMetrics_AddTopic_InitializesAllMaps(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	topic := "new-topic"
 
 	jobMetrics := serviceMetrics.AddTopic(topic)
@@ -842,7 +842,7 @@ func TestServiceMetrics_AddTopic_InitializesAllMaps(t *testing.T) {
 }
 
 func TestServiceMetrics_TopicMetrics_ThreadSafety(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	err := serviceMetrics.Init()
 	assert.NoError(t, err)
 
@@ -890,7 +890,7 @@ func TestServiceMetrics_TopicMetrics_ThreadSafety(t *testing.T) {
 }
 
 func TestServiceMetrics_TopicMetrics_ZeroDivision(t *testing.T) {
-	serviceMetrics := NewSericeMetrics(true)
+	serviceMetrics := NewServiceMetrics(true)
 	topic := "zero-test-topic"
 
 	serviceMetrics.AddTopic(topic)

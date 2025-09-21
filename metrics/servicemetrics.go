@@ -543,7 +543,7 @@ func isJobCompleted(state job.JobState) bool {
 	}
 }
 
-func NewSericeMetrics(enabledCollect bool) *ServiceMetrics {
+func NewServiceMetrics(enabledCollect bool) *ServiceMetrics {
 	return &ServiceMetrics{
 		JobMetricsByTopicMap:      sync.Map{},
 		TopicMetricsByTopicMap:    sync.Map{},
