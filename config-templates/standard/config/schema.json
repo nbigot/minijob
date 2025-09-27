@@ -74,13 +74,6 @@
       "title": "Trace ID",
       "examples": ["0190e951-c29a-70aa-ba59-18be4abe97a0"]
     },
-    "debugMode": {
-      "$id": "#/properties/debugMode",
-      "type": "boolean",
-      "title": "Debug Mode",
-			"default": false,
-      "examples": [true, false]
-    },
 		"startAfter": {
       "$id": "#/properties/startAfter",
       "type": "integer",

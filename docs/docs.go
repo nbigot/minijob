@@ -655,10 +655,6 @@ const docTemplate = `{
         "job.Job": {
             "type": "object",
             "properties": {
-                "debugMode": {
-                    "description": "The debug flag of the job (optional)",
-                    "type": "boolean"
-                },
                 "history": {
                     "description": "The list of events of the job",
                     "type": "array",
@@ -746,10 +742,6 @@ const docTemplate = `{
                 "properties"
             ],
             "properties": {
-                "debugMode": {
-                    "description": "DebugMode is the debug flag of the job (optional)",
-                    "type": "boolean"
-                },
                 "delay": {
                     "description": "Delay (in seconds) to wait before starting the job",
                     "type": "integer"

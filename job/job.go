@@ -68,7 +68,6 @@ type Job struct {
 	Name              string        `json:"name"`              // The name of the job (optional)
 	SessionId         string        `json:"sessionId"`         // The session identifier of the requester (optional)
 	TraceId           string        `json:"traceId"`           // The trace identifier of the job (optional)
-	DebugMode         bool          `json:"debugMode"`         // The debug flag of the job (optional)
 	VisibilityTimeout uint          `json:"visibilityTimeout"` // Duration (in seconds) to keep the job hidden from the queue after it is fetched
 	StartAfter        int64         `json:"startAfter"`        // Timestamp (in milliseconds) to start the job after
 	CallbackURL       string        `json:"callbackUrl"`       // URL to call when job completes (success or failure) (optional)
@@ -89,7 +88,6 @@ type JobRequest struct {
 	Name          string        `json:"name" example:"myJobName01"`                               // Name is the name of the job (optional)
 	SessionId     string        `json:"sessionId" example:"6e70464d-85cf-431d-a9c9-a1f9c0ac82dc"` // SessionId is the session identifier of the requester (optional)
 	TraceId       string        `json:"traceId" example:"e7b46b16-c971-464e-8a47-c791be0ce2ed"`   // TraceId is the trace identifier of the job (optional)
-	DebugMode     bool          `json:"debugMode" example:"false"`                                // DebugMode is the debug flag of the job (optional)
 	StartAfter    int64         `json:"startAfter"`                                               // Timestamp (in milliseconds) to start the job after
 	Delay         int64         `json:"delay" example:"0"`                                        // Delay (in seconds) to wait before starting the job
 	CallbackURL   string        `json:"callbackUrl" example:"https://api.example.com/webhook"`    // URL to call when job completes (success or failure) (optional)
@@ -229,7 +227,6 @@ func (j *Job) Clone() *Job {
 		Name:              j.Name,
 		SessionId:         j.SessionId,
 		TraceId:           j.TraceId,
-		DebugMode:         j.DebugMode,
 		VisibilityTimeout: j.VisibilityTimeout,
 		StartAfter:        j.StartAfter,
 		CallbackURL:       j.CallbackURL,
@@ -348,7 +345,6 @@ func NewJobFromRequest(payload []byte) (*Job, error) {
 		Name:          req.Name,
 		SessionId:     req.SessionId,
 		TraceId:       req.TraceId,
-		DebugMode:     req.DebugMode,
 		StartAfter:    startAfter,
 		CallbackURL:   req.CallbackURL,
 		state:         JobNoState,
