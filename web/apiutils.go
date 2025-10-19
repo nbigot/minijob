@@ -24,10 +24,10 @@ func (w *WebAPIServer) Home(c *fiber.Ctx) error {
 // @ID utils-ping
 // @Produce plain
 // @Tags Utils
-// @Success 200 {string} string "ok"
+// @Success 200 {string} string "OK"
 // @Router /ping [get]
 func (w *WebAPIServer) Ping(c *fiber.Ctx) error {
-	return c.SendString("ok")
+	return c.SendStatus(fiber.StatusOK)
 }
 
 // Healthcheck godoc
@@ -36,11 +36,11 @@ func (w *WebAPIServer) Ping(c *fiber.Ctx) error {
 // @ID utils-healthcheck
 // @Produce plain
 // @Tags Utils
-// @Success 200 {string} string "ok"
+// @Success 200 {string} string "OK"
 // @Router /healthcheck [get]
 func (w *WebAPIServer) Healthcheck(c *fiber.Ctx) error {
 	if w.service.Healthcheck() {
-		return c.SendString("ok")
+		return c.SendStatus(fiber.StatusOK)
 	}
 
 	return c.SendStatus(fiber.StatusServiceUnavailable)

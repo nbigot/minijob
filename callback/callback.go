@@ -53,10 +53,9 @@ func (cs *CallbackService) NotifyTopicEvent(ev event.ServiceEventType, topic str
 // NotifyJobEvent implements IServiceEventObserver interface
 func (cs *CallbackService) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 	// Check if this is a job completion event and trigger callback if needed
-	if !cs.ShouldTriggerCallback(j) {
+	if cs.ShouldTriggerCallback(j) {
 		cs.ExecuteCallbackAsync(j)
 	}
-
 }
 
 // ShouldTriggerCallback checks if a callback should be triggered based on job state
@@ -71,6 +70,11 @@ func (cs *CallbackService) ShouldTriggerCallback(j *job.Job) bool {
 
 // ExecuteCallback sends the callback notification
 func (cs *CallbackService) ExecuteCallback(job *job.Job) error {
+	// Additional safety check
+	if job.CallbackURL == "" {
+		return fmt.Errorf("callback URL is empty for job %s", job.JobUUID.String())
+	}
+
 	payload := CallbackPayload{
 		JobID:     job.JobUUID.String(),
 		Status:    job.GetStateString(),

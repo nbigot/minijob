@@ -1,4 +1,5 @@
 # Configuration file for minijob server
+environment: "loadtest"
 jobs:
     logVerbosity: 1
     maxAllowedJobs: 0 # Maximum number of jobs allowed to be created (0 means no limit)

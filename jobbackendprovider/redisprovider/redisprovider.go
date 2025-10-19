@@ -511,6 +511,14 @@ func (p *RedisJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEve
 	}
 }
 
+func (p *RedisJobBackendProvider) GetDiskUsage() int64 {
+	return 0
+}
+
+func (p *RedisJobBackendProvider) GetType() string {
+	return "Redis"
+}
+
 func JobUUID2RedisKey(jobUUID job.JobUUID) string {
 	return "job:" + jobUUID.String()
 }

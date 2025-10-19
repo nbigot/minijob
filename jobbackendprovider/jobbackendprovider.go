@@ -75,4 +75,6 @@ type IJobBackendProvider interface {
 	NotifyJobEvent(j *job.Job, ev event.ServiceEventType)
 	Run() error
 	Healthcheck() bool
+	GetDiskUsage() int64
+	GetType() string
 }

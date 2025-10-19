@@ -70,6 +70,11 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiAdmin.Post("/server/shutdown", w.ApiServerShutdown)
 	apiAdmin.Post("/server/restart", w.ApiServerRestart)
 
+	apiSystem := api.Group("/system")
+	apiSystem.Get("/info", w.GetSystemInfo)
+	apiSystem.Get("/health", w.GetSystemHealth)
+	apiSystem.Get("/resources", w.GetSystemResources)
+
 	if w.appConfig.WebServer.Metrics.Enable {
 		apiObservability := api.Group("/metrics")
 		apiObservability.Get("/jobs", w.GetJobsMetrics)

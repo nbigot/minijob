@@ -328,6 +328,18 @@ func (p *InMemoryJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.Service
 	}
 }
 
+func (p *InMemoryJobBackendProvider) GetDiskUsage() int64 {
+	if p.enablePersistantStorage {
+		return p.storage.GetDiskUsage()
+	} else {
+		return 0
+	}
+}
+
+func (p *InMemoryJobBackendProvider) GetType() string {
+	return "InMemory"
+}
+
 func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbackendprovider.IJobBackendProvider, error) {
 	if conf.Backend.InMemory.MaxJobs == 0 {
 		return nil, fmt.Errorf("invalid value for configuration backend.inMemory.maxJobs: %d", conf.Backend.InMemory.MaxJobs)

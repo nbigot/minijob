@@ -75,6 +75,25 @@ type Job struct {
 	previousState     JobState      // The previous state of the job
 }
 
+// JobResponse is the public-facing structure returned in HTTP responses
+type JobResponse struct {
+	JobUUID           JobUUID       `json:"id"`                // The unique identifier of a job (required)
+	Topic             string        `json:"topic"`             // The topic name for which the job has been created (optional)
+	Priority          int8          `json:"priority"`          // The priority of the job (optional)
+	JobProperties     JobProperties `json:"properties"`        // The job properties (required)
+	History           JobHistory    `json:"history"`           // The list of events of the job
+	LockResources     ResourceList  `json:"lockResources"`     // The list of resources to lock (optional)
+	UserAgent         string        `json:"userAgent"`         // The user agent (or program name) that make the request (optional)
+	Requester         string        `json:"requester"`         // The identifier of the job requester (optional)
+	Name              string        `json:"name"`              // The name of the job (optional)
+	SessionId         string        `json:"sessionId"`         // The session identifier of the requester (optional)
+	TraceId           string        `json:"traceId"`           // The trace identifier of the job (optional)
+	VisibilityTimeout uint          `json:"visibilityTimeout"` // Duration (in seconds) to keep the job hidden from the queue after it is fetched
+	StartAfter        int64         `json:"startAfter"`        // Timestamp (in milliseconds) to start the job after
+	CallbackURL       string        `json:"callbackUrl"`       // URL to call when job completes (success or failure) (optional)
+	State             string        `json:"state"`             // The current state of the job (human-readable)
+}
+
 type JobMap = map[JobUUID]*Job
 
 // JobRequest is the request to create a job, it is used to create a job from a http request
@@ -353,4 +372,24 @@ func NewJobFromRequest(payload []byte) (*Job, error) {
 
 	// note that the JobUUID and History will be set later
 	return j, nil
+}
+
+func (j *Job) ToResponse() *JobResponse {
+	return &JobResponse{
+		JobUUID:           j.JobUUID,
+		Topic:             j.Topic,
+		Priority:          j.Priority,
+		JobProperties:     j.JobProperties,
+		History:           j.History,
+		LockResources:     j.LockResources,
+		UserAgent:         j.UserAgent,
+		Requester:         j.Requester,
+		Name:              j.Name,
+		SessionId:         j.SessionId,
+		TraceId:           j.TraceId,
+		VisibilityTimeout: j.VisibilityTimeout,
+		StartAfter:        j.StartAfter,
+		CallbackURL:       j.CallbackURL,
+		State:             j.GetStateString(),
+	}
 }

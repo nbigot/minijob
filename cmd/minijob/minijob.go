@@ -98,7 +98,7 @@ func RunServer(appConfig *config.Config) (bool, error) {
 	}
 	defer registry.Finalize()
 
-	svc, err := service.CreateAndInitService(appConfig)
+	svc, err := service.CreateAndInitService(appConfig, Version)
 	if err != nil {
 		return false, err
 	}

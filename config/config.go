@@ -63,7 +63,8 @@ type ConsulConfig struct {
 }
 
 type Config struct {
-	Backend struct {
+	Environment string `yaml:"environment" example:"development"` // Environment name (development, staging, production, etc.)
+	Backend     struct {
 		Type         string     `yaml:"type" example:"redis"` // Type of backend to use (redis, inMemory)
 		LoggerConfig zap.Config `yaml:"logger"`
 		LogVerbosity int        `yaml:"logVerbosity"`

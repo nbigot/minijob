@@ -29,6 +29,7 @@ import (
 
 type Service struct {
 	// implements IService interface
+	version                     string                                 // service version
 	jobs                        job.JobMap                             // hashmap of jobs
 	pendingJobs                 job.JobMap                             // hashmap of pending jobs
 	pqRetryJobs                 pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
@@ -47,6 +48,7 @@ type Service struct {
 	wg                          sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
 	stopChan                    chan struct{}                          // stopChan is a channel to stop the Run function
 	running                     atomic.Bool                            // Add this to track if the service is running
+	startTime                   time.Time                              // service start time
 	bp                          jobbackendprovider.IJobBackendProvider // backend provider
 	conf                        *config.Config                         // configuration
 	logger                      *zap.Logger                            // logger
@@ -83,7 +85,20 @@ func (svc *Service) Init() error {
 		return err
 	}
 
+	svc.startTime = time.Now()
 	return nil
+}
+
+func (svc *Service) GetVersion() string {
+	return svc.version
+}
+
+func (svc *Service) GetEnvironment() string {
+	return svc.conf.Environment
+}
+
+func (svc *Service) GetHostname() string {
+	return svc.conf.WebServer.HTTP.Address
 }
 
 func (svc *Service) GetJobsCount() uint {
@@ -1351,6 +1366,14 @@ func (svc *Service) CheckDelayedJobs() {
 	svc.mu.Unlock()
 }
 
+func (svc *Service) GetUptime() int64 {
+	return int64(time.Since(svc.startTime).Seconds())
+}
+
+func (svc *Service) GetBackendProvider() jobbackendprovider.IJobBackendProvider {
+	return svc.bp
+}
+
 func (svc *Service) Run() error {
 	if !svc.running.CompareAndSwap(false, true) {
 		return errors.New("service is already running")
@@ -1478,12 +1501,13 @@ func requiresLockedResources(lockedResources job.LockedResources, job *job.Job) 
 	return false
 }
 
-func NewService(logger *zap.Logger, conf *config.Config) (*Service, error) {
+func NewService(logger *zap.Logger, conf *config.Config, version string) (*Service, error) {
 	bp, err := registry.NewJobBackendProvider(conf)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
+		version:                     version,
 		logger:                      logger,
 		conf:                        conf,
 		bp:                          bp,
@@ -1500,10 +1524,10 @@ func NewService(logger *zap.Logger, conf *config.Config) (*Service, error) {
 	}, nil
 }
 
-func CreateAndInitService(conf *config.Config) (*Service, error) {
+func CreateAndInitService(conf *config.Config, version string) (*Service, error) {
 	var err error
 
-	svc, err := NewService(log.Logger, conf)
+	svc, err := NewService(log.Logger, conf, version)
 	if err != nil {
 		log.Logger.Error("Error while instantiate job service",
 			zap.String("topic", "service"),

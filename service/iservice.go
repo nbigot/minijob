@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/nbigot/minijob/job"
+	"github.com/nbigot/minijob/jobbackendprovider"
 	"github.com/nbigot/minijob/metrics"
 	"go.uber.org/zap"
 )
@@ -22,6 +23,8 @@ type IService interface {
 	Init() error
 	Stop() error
 	Finalize() error
+	GetVersion() string
+	GetEnvironment() string
 	GetJobsCount() uint
 	GetJobsUUIDs() job.JobUUIDList
 	LoadJobs() error
@@ -48,5 +51,8 @@ type IService interface {
 	GetTopics() []string
 	TryEnqueuePendingJobs()
 	CheckJobsVisibilityTimeout()
+	GetUptime() int64
+	GetHostname() string
+	GetBackendProvider() jobbackendprovider.IJobBackendProvider
 	GetLogger() *zap.Logger
 }

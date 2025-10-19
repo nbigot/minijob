@@ -106,6 +106,20 @@ func (s *DBFileStorage) GetFilePath() string {
 	return filepath.Join(s.directory, s.filename)
 }
 
+func (s *DBFileStorage) GetDiskUsage() int64 {
+	fileInfo, err := os.Stat(s.GetFilePath())
+	if err != nil {
+		s.logger.Error("Can't get file info",
+			zap.String("topic", "DBFileStorage"),
+			zap.String("method", "GetDiskUsage"),
+			zap.String("filename", s.GetFilePath()),
+			zap.Error(err),
+		)
+		return 0
+	}
+	return fileInfo.Size()
+}
+
 func NewDBFileStorage(logger *zap.Logger, directory string, filename string) *DBFileStorage {
 	return &DBFileStorage{logger: logger, directory: directory, filename: filename}
 }

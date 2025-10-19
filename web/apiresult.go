@@ -17,43 +17,43 @@ type JSONResult struct {
 }
 
 type JSONResultGetAllJobs struct {
-	Code    int        `json:"code" example:"200"`        // The result code
-	Message string     `json:"message" example:"success"` // The result message
-	Jobs    []*job.Job `json:"jobs"`                      // The jobs
+	Code    int                `json:"code" example:"200"`        // The result code
+	Message string             `json:"message" example:"success"` // The result message
+	Jobs    []*job.JobResponse `json:"jobs"`                      // The jobs
 }
 
 type JSONResultGetJobs struct {
-	Code       int        `json:"code" example:"200"`        // The result code
-	Message    string     `json:"message" example:"success"` // The result message
-	Jobs       []*job.Job `json:"jobs"`                      // The jobs
-	Total      uint       `json:"total"`                     // The total number of jobs
-	Page       uint       `json:"page"`                      // The current page
-	Limit      uint       `json:"limit"`                     // The page limit
-	TotalPages uint       `json:"totalpages"`                // The total number of pages
+	Code       int                `json:"code" example:"200"`        // The result code
+	Message    string             `json:"message" example:"success"` // The result message
+	Jobs       []*job.JobResponse `json:"jobs"`                      // The jobs
+	Total      uint               `json:"total"`                     // The total number of jobs
+	Page       uint               `json:"page"`                      // The current page
+	Limit      uint               `json:"limit"`                     // The page limit
+	TotalPages uint               `json:"totalpages"`                // The total number of pages
 }
 
 type JSONResultGetJob struct {
-	Code    int      `json:"code" example:"200"`        // The result code
-	Message string   `json:"message" example:"success"` // The result message
-	Job     *job.Job `json:"job"`                       // The job
+	Code    int              `json:"code" example:"200"`        // The result code
+	Message string           `json:"message" example:"success"` // The result message
+	Job     *job.JobResponse `json:"job"`                       // The job
 }
 
 type JSONResultCreateJob struct {
-	Code    int      `json:"code" example:"200"`        // The result code
-	Message string   `json:"message" example:"success"` // The result message
-	Job     *job.Job `json:"job"`                       // The job
+	Code    int              `json:"code" example:"200"`        // The result code
+	Message string           `json:"message" example:"success"` // The result message
+	Job     *job.JobResponse `json:"job"`                       // The job
 }
 
 type JSONResultCloneJob struct {
-	Code    int      `json:"code" example:"200"`        // The result code
-	Message string   `json:"message" example:"success"` // The result message
-	Job     *job.Job `json:"job"`                       // The job
+	Code    int              `json:"code" example:"200"`        // The result code
+	Message string           `json:"message" example:"success"` // The result message
+	Job     *job.JobResponse `json:"job"`                       // The job
 }
 
 type JSONResultPullJob struct {
-	Code    int        `json:"code" example:"200"`        // The result code
-	Message string     `json:"message" example:"success"` // The result message
-	Jobs    []*job.Job `json:"jobs"`                      // The jobs
+	Code    int                `json:"code" example:"200"`        // The result code
+	Message string             `json:"message" example:"success"` // The result message
+	Jobs    []*job.JobResponse `json:"jobs"`                      // The jobs
 }
 
 type JSONResultGetLockedResources struct {
@@ -84,6 +84,17 @@ type JSONResultGetResourcesStats struct {
 	Code      int                       `json:"code" example:"200"`        // The result code
 	Message   string                    `json:"message" example:"success"` // The result message
 	Resources []metrics.ResourceMetrics `json:"resources"`                 // The job resources with metrics
+}
+
+type JSONResultGetSystemInfo struct {
+	Code       int    `json:"code" example:"200"`        // The result code
+	Message    string `json:"message" example:"success"` // The result message
+	SystemInfo struct {
+		Version     string `json:"version"`
+		Uptime      int64  `json:"uptime"`
+		Hostname    string `json:"hostname"`
+		Environment string `json:"environment"`
+	} `json:"systemInfo"`
 }
 
 type TopOldJobsResult struct {

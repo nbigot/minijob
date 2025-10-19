@@ -1,5 +1,5 @@
 # Configuration file for minijob server
-environment: "development"
+environment: "development-inMemory"
 jobs:
     # bulkFlushFrequency: 2
     # bulkMaxSize: 100
@@ -9,8 +9,8 @@ jobs:
     logVerbosity: 1
     maxAllowedJobs: 0 # Maximum number of jobs allowed to be created (0 means no limit)
     jsonSchema:
-        enable: true  # Enable JSON schema validation for job data
-        path: "C:\\dev\\minijob\\config-templates\\standard\\config\\schema.json" # Path to JSON schema file
+        enable: false  # Enable JSON schema validation for job data
+        path: "" # Path to JSON schema file
     retentionPolicy:
         enable: true
         interval: 60
@@ -55,15 +55,14 @@ backend:
     logVerbosity: 3
     type: "inMemory"  # "redis" "inMemory"
     redis:
-        url: "redis://localhost:6379/3?dial_timeout=3&db=1&read_timeout=6s&max_retries=2&client_name=minijob"
-        #url: "redis://user:password@localhost:6379/3?dial_timeout=3&db=1&read_timeout=6s&max_retries=2&client_name=minijob"
+        url: ""
         maxJobs: 100000
         finishedJobTTL: 86400
     inMemory:
         maxJobs: 100000
         writeFrequency: 30
-        enablePersistantStorage: true
-        directory: "C:\\dev\\minijob\\ignore\\data\\"
+        enablePersistantStorage: false
+        directory: "/data/minijob"  # Directory for persistant storage
         filename: "jobs.json"
 webserver:
     cors:
@@ -78,7 +77,7 @@ webserver:
         enable: true
     http:
         enable: true
-        address: "127.0.0.1:8080"  # "127.0.0.1:8080" "0.0.0.0:8080"
+        address: "127.0.0.1:8080"
     swagger:
         enable: true
 consul:

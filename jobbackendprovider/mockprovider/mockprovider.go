@@ -308,6 +308,14 @@ func (p *MockJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEven
 	}
 }
 
+func (p *MockJobBackendProvider) GetDiskUsage() int64 {
+	return 0
+}
+
+func (p *MockJobBackendProvider) GetType() string {
+	return "Mock"
+}
+
 func NewMockJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbackendprovider.IJobBackendProvider, error) {
 	return &MockJobBackendProvider{
 		logger:         logger,

@@ -8,10 +8,20 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/utils"
 	"github.com/nbigot/minijob/constants"
+	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/metrics"
 	"github.com/nbigot/minijob/service"
 	"github.com/nbigot/minijob/web/apierror"
 )
+
+// convertJobsToResponses converts a slice of Job pointers to a slice of JobResponse pointers
+func convertJobsToResponses(jobs []*job.Job) []*job.JobResponse {
+	jobResponses := make([]*job.JobResponse, 0, len(jobs))
+	for _, j := range jobs {
+		jobResponses = append(jobResponses, j.ToResponse())
+	}
+	return jobResponses
+}
 
 // GetAllJobs godoc
 // @Summary Get all jobs
@@ -29,7 +39,7 @@ func (w *WebAPIServer) GetAllJobs(c *fiber.Ctx) error {
 		JSONResultGetAllJobs{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Jobs:    jobs,
+			Jobs:    convertJobsToResponses(jobs),
 		},
 	)
 }
@@ -96,7 +106,7 @@ func (w *WebAPIServer) GetJobs(c *fiber.Ctx) error {
 	return c.JSON(JSONResultGetJobs{
 		Code:       fiber.StatusOK,
 		Message:    "success",
-		Jobs:       response.Jobs,
+		Jobs:       convertJobsToResponses(response.Jobs),
 		Total:      uint(response.Total),
 		Page:       uint(response.Page),
 		Limit:      uint(response.Limit),
@@ -231,7 +241,7 @@ func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 		JSONResultGetJob{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Job:     job,
+			Job:     job.ToResponse(),
 		},
 	)
 }
@@ -312,7 +322,7 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 		JSONResultCreateJob{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Job:     job,
+			Job:     job.ToResponse(),
 		},
 	)
 }
@@ -393,7 +403,7 @@ func (w *WebAPIServer) CloneJob(c *fiber.Ctx) error {
 		JSONResultCloneJob{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Job:     job,
+			Job:     job.ToResponse(),
 		},
 	)
 }
@@ -433,7 +443,7 @@ func (w *WebAPIServer) PullJob(c *fiber.Ctx) error {
 		JSONResultPullJob{
 			Code:    fiber.StatusOK,
 			Message: "success",
-			Jobs:    res.Jobs,
+			Jobs:    convertJobsToResponses(res.Jobs),
 		},
 	)
 }

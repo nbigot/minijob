@@ -13,6 +13,10 @@ $ ./minijob -config config-templates/standard/config/config.yaml
 Or use a specific configuration if you want to run the loadtest:
 
 ```sh
+$ go run cmd/minijob/minijob.go -config config-templates/standard/config/config.inmemory.yaml
+```
+
+```sh
 $ go run cmd/minijob/minijob.go -config config-templates/standard/config/config.loadtest.yaml
 ```
 
