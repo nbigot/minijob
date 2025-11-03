@@ -1501,6 +1501,14 @@ func requiresLockedResources(lockedResources job.LockedResources, job *job.Job) 
 	return false
 }
 
+func jobEqual(a, b *job.Job) bool {
+	// Equality function for comparing jobs by pointer address
+	if a == nil || b == nil {
+		return false
+	}
+	return a.JobUUID == b.JobUUID
+}
+
 func NewService(logger *zap.Logger, conf *config.Config, version string) (*Service, error) {
 	bp, err := registry.NewJobBackendProvider(conf)
 	if err != nil {
@@ -1513,6 +1521,8 @@ func NewService(logger *zap.Logger, conf *config.Config, version string) (*Servi
 		bp:                          bp,
 		jobs:                        make(job.JobMap),
 		pendingJobs:                 make(job.JobMap),
+		pqRetryJobs:                 *pq.NewPriorityQueue(jobEqual),
+		pqDelayedJobs:               *pq.NewPriorityQueue(jobEqual),
 		notifChanBP:                 make(chan jobbackendprovider.Event, 1000),
 		notifyTryEnqueuePendingJobs: make(chan struct{}, 1000),
 		stopChan:                    make(chan struct{}),
