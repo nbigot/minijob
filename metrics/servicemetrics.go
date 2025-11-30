@@ -64,6 +64,20 @@ func (j *JobMetrics) Clear() {
 	j.JobsStatusCanceled = 0
 }
 
+type JobStatsMetrics struct {
+	ExistingJobs  uint `json:"existingJobs"`  // current number of existing jobs
+	CreatedJobs   uint `json:"createdJobs"`   // total number of jobs
+	DelayedJobs   uint `json:"delayedJobs"`   // number of delayed jobs
+	PendingJobs   uint `json:"pendingJobs"`   // number of pending jobs
+	QueuedJobs    uint `json:"queuedJobs"`    // number of queued jobs
+	RunningJobs   uint `json:"runningJobs"`   // number of running jobs
+	SucceededJobs uint `json:"succeededJobs"` // number of succeeded jobs
+	FailedJobs    uint `json:"failedJobs"`    // number of failed jobs
+	HiddenJobs    uint `json:"hiddenJobs"`    // number of hidden jobs
+	CanceledJobs  uint `json:"canceledJobs"`  // number of canceled jobs
+	DeletedJobs   uint `json:"deletedJobs"`   // number of deleted jobs
+}
+
 type JobMetricsTopicMap map[string][]JobMetrics
 
 type JobMetricsTopicStatsMap map[string][]TopicMetrics
@@ -486,6 +500,31 @@ func (s *ServiceMetrics) GetJobMetricsByTopicMap() JobMetricsTopicMap {
 	})
 
 	return jobMetricsTopicMap
+}
+
+func (s *ServiceMetrics) GetJobMetricsByStatus() JobStatsMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var stats JobStatsMetrics
+
+	s.JobMetricsByTopicMap.Range(func(key, value interface{}) bool {
+		jobMetrics := value.(*JobMetrics)
+		stats.ExistingJobs += jobMetrics.JobsExisting
+		stats.CreatedJobs += jobMetrics.JobsStatusCreated
+		stats.DelayedJobs += jobMetrics.JobsStatusDelayed
+		stats.PendingJobs += jobMetrics.JobsStatusPending
+		stats.QueuedJobs += jobMetrics.JobsStatusQueued
+		stats.RunningJobs += jobMetrics.JobsStatusRunning
+		stats.SucceededJobs += jobMetrics.JobsStatusSucceeded
+		stats.FailedJobs += jobMetrics.JobsStatusFailed
+		stats.HiddenJobs += jobMetrics.JobsStatusHidden
+		stats.CanceledJobs += jobMetrics.JobsStatusCanceled
+		stats.DeletedJobs += jobMetrics.JobsCounterDeleted
+		return true
+	})
+
+	return stats
 }
 
 // UpdateTopicMetrics updates the pre-calculated TopicMetrics for a given topic and job

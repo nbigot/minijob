@@ -14,6 +14,7 @@ type IServiceMetrics interface {
 	GetTopicsStats() []TopicMetrics
 	GetResourcesMetrics() []ResourceMetrics
 	GetMetricByTopic(topic string) *JobMetrics
+	GetJobMetricsByStatus() JobStatsMetrics
 	NotifyEvent(event.ServiceEventType)
 	NotifyTopicEvent(ev event.ServiceEventType, topic string)
 	NotifyJobEvent(*job.Job, event.ServiceEventType)

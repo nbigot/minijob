@@ -63,6 +63,12 @@ type JSONResultGetLockedResources struct {
 }
 
 type JSONResultGetJobsMetrics struct {
+	Code    int                     `json:"code" example:"200"`        // The result code
+	Message string                  `json:"message" example:"success"` // The result message
+	Metrics metrics.JobStatsMetrics `json:"jobStats"`                  // The metrics
+}
+
+type JSONResultGetJobsMetricsTopics struct {
 	Code    int                        `json:"code" example:"200"`        // The result code
 	Message string                     `json:"message" example:"success"` // The result message
 	Metrics metrics.JobMetricsTopicMap `json:"metrics"`                   // The metrics
@@ -108,6 +114,20 @@ type JSONResultGetOldJobs struct {
 	Code    int             `json:"code"`    // The result code
 	Message string          `json:"message"` // The result message
 	Topics  TopicOldJobsMap `json:"topics"`  // The oldest jobs by topic
+}
+
+type StalledJobResult struct {
+	JobUUID  string `json:"id"`       // The job UUID
+	Topic    string `json:"topic"`    // The job topic
+	State    string `json:"state"`    // The job state
+	Created  int64  `json:"created"`  // The job creation timestamp in milliseconds
+	Duration uint   `json:"duration"` // The job duration in milliseconds
+}
+
+type JSONResultGetStalledJobs struct {
+	Code    int                `json:"code"`    // The result code
+	Message string             `json:"message"` // The result message
+	Jobs    []StalledJobResult `json:"jobs"`    // The stalled jobs
 }
 
 type HTTPError struct {

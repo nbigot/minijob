@@ -53,6 +53,7 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiJobs.Get("/", w.GetJobs)
 	apiJobs.Get("/all", w.GetAllJobs)
 	apiJobs.Get("/oldest", w.GetOldestJobs)
+	apiJobs.Get("/stalled", w.GetStalledJobs)
 	apiJobs.Delete("/queued", w.DeleteQueuedJobs)
 	apiJobs.Delete("/", w.DeleteAllJobs)
 
@@ -77,12 +78,9 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 	if w.appConfig.WebServer.Metrics.Enable {
 		apiObservability := api.Group("/metrics")
-		apiObservability.Get("/jobs", w.GetJobsMetrics)
-		apiObservability.Get("/jobs/recent", w.GetJobsMetrics)  // TODO
-		apiObservability.Get("/jobs/stalled", w.GetJobsMetrics) // TODO
-		apiObservability.Get("/jobs/stats", w.GetJobsMetrics)   // TODO
+		apiObservability.Get("/jobs/topics", w.GetJobsMetricsTopics)
+		apiObservability.Get("/jobs/stalled", w.GetStalledJobs)
 		apiObservability.Get("/resources", w.GetResourcesMetrics)
-		apiObservability.Get("/stats", w.GetJobsMetrics) // TODO
 		apiObservability.Get("/topics", w.GetTopicsStats)
 	}
 
