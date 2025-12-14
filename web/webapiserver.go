@@ -54,6 +54,7 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiJobs.Get("/all", w.GetAllJobs)
 	apiJobs.Get("/oldest", w.GetOldestJobs)
 	apiJobs.Get("/stalled", w.GetStalledJobs)
+	apiJobs.Get("/recent", w.GetRecentJobs)
 	apiJobs.Delete("/queued", w.DeleteQueuedJobs)
 	apiJobs.Delete("/", w.DeleteAllJobs)
 

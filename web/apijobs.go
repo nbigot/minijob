@@ -819,44 +819,22 @@ func (w *WebAPIServer) GetOldestJobs(c *fiber.Ctx) error {
 	})
 }
 
-// GetStalledJobs godoc
-// @Summary Get stalled jobs
-// @Description Get jobs that have been running or queued for an unusually long time
-// @ID jobs-get-stalled
-// @Produce json
-// @Tags Jobs
-// @Param duration query int false "Minimum job duration in minutes to consider stalled (default 60, min 1, max 10080)"
-// @success 200 {object} web.JSONResultGetStalledJobs{} "successful operation"
-// @Router /api/v1/jobs/stalled [get]
-func (w *WebAPIServer) GetStalledJobs(c *fiber.Ctx) error {
-	c.Locals("metricName", "GetStalledJobs")
-
-	// Get duration threshold parameter in minutes, default to 60 minutes (1 hour)
-	minDurationMinutes, apiErr := GetUintParameterFromQuery(c, "duration", 0, 1, 10080) // 60, 1, 10080
-	if apiErr != nil {
-		return apiErr.HTTPResponse(c)
-	}
-	// Convert minutes to milliseconds
-	minDurationMs := int64(minDurationMinutes) * 60 * 1000
-
+// getFilteredJobResults is a helper function that filters jobs based on a custom predicate
+// and returns them sorted by duration
+func (w *WebAPIServer) getFilteredJobResults(filterFunc func(*job.Job, int64) bool, sortDescending bool) []JobDurationResult {
 	jobs := w.service.GetAllJobs()
-	stalledJobs := make([]StalledJobResult, 0)
+	filteredJobs := make([]JobDurationResult, 0)
 	now := time.Now().UnixMilli()
 
 	for _, j := range jobs {
-		// Only consider running or queued jobs
-		if j.GetState() != job.JobRunning && j.GetState() != job.JobQueued {
-			continue
-		}
-
 		jobDurationMs := now - j.GetCreationTimestamp()
 
-		// Filter jobs that exceed the duration threshold
-		if jobDurationMs < minDurationMs {
+		// Apply the custom filter
+		if !filterFunc(j, jobDurationMs) {
 			continue
 		}
 
-		stalledJobs = append(stalledJobs, StalledJobResult{
+		filteredJobs = append(filteredJobs, JobDurationResult{
 			JobUUID:  j.JobUUID.String(),
 			Topic:    j.Topic,
 			State:    j.GetStateString(),
@@ -865,15 +843,89 @@ func (w *WebAPIServer) GetStalledJobs(c *fiber.Ctx) error {
 		})
 	}
 
-	// Sort by duration (longest first)
-	sort.Slice(stalledJobs, func(i, j int) bool {
-		return stalledJobs[i].Duration > stalledJobs[j].Duration
-	})
+	// Sort by duration
+	if sortDescending {
+		sort.Slice(filteredJobs, func(i, j int) bool {
+			return filteredJobs[i].Duration > filteredJobs[j].Duration
+		})
+	} else {
+		sort.Slice(filteredJobs, func(i, j int) bool {
+			return filteredJobs[i].Duration < filteredJobs[j].Duration
+		})
+	}
 
-	return c.JSON(JSONResultGetStalledJobs{
+	return filteredJobs
+}
+
+// GetStalledJobs godoc
+// @Summary Get stalled jobs
+// @Description Get jobs that have been running or queued for an unusually long time
+// @ID jobs-get-stalled
+// @Produce json
+// @Tags Jobs
+// @Param duration query int false "Minimum job duration in minutes to consider stalled (default 60, min 1, max 10080)"
+// @success 200 {object} web.JSONResultJobDurationList{} "successful operation"
+// @Router /api/v1/jobs/stalled [get]
+func (w *WebAPIServer) GetStalledJobs(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetStalledJobs")
+
+	// Get duration threshold parameter in minutes, default to 60 minutes (1 hour)
+	minDurationMinutes, apiErr := GetUintParameterFromQuery(c, "duration", 60, 1, 10080)
+	if apiErr != nil {
+		return apiErr.HTTPResponse(c)
+	}
+	minDurationMs := int64(minDurationMinutes) * 60 * 1000 // Convert minutes to milliseconds
+
+	// Filter jobs: running or queued AND duration >= minDurationMs
+	filterFunc := func(j *job.Job, jobDurationMs int64) bool {
+		if j.GetState() != job.JobRunning && j.GetState() != job.JobQueued {
+			return false
+		}
+		return jobDurationMs >= minDurationMs
+	}
+
+	stalledJobs := w.getFilteredJobResults(filterFunc, true) // Sort descending (longest first)
+
+	return c.JSON(JSONResultJobDurationList{
 		Code:    fiber.StatusOK,
 		Message: "success",
 		Jobs:    stalledJobs,
+	})
+}
+
+// GetRecentJobs godoc
+// @Summary Get recently started jobs
+// @Description Get jobs that have been running or queued for a short time
+// @ID jobs-get-recent
+// @Produce json
+// @Tags Jobs
+// @Param duration query int false "Maximum job duration in minutes to consider recent (default 10, min 1, max 10080)"
+// @success 200 {object} web.JSONResultJobDurationList{} "successful operation"
+// @Router /api/v1/jobs/recent [get]
+func (w *WebAPIServer) GetRecentJobs(c *fiber.Ctx) error {
+	c.Locals("metricName", "GetRecentJobs")
+
+	// Get duration threshold parameter in minutes, default to 10 minutes
+	maxDurationMinutes, apiErr := GetUintParameterFromQuery(c, "duration", 10, 1, 10080)
+	if apiErr != nil {
+		return apiErr.HTTPResponse(c)
+	}
+	maxDurationMs := int64(maxDurationMinutes) * 60 * 1000 // Convert minutes to milliseconds
+
+	// Filter jobs: running or queued AND duration <= maxDurationMs
+	filterFunc := func(j *job.Job, jobDurationMs int64) bool {
+		if j.GetState() != job.JobRunning && j.GetState() != job.JobQueued {
+			return false
+		}
+		return jobDurationMs <= maxDurationMs
+	}
+
+	recentJobs := w.getFilteredJobResults(filterFunc, false) // Sort ascending (shortest first)
+
+	return c.JSON(JSONResultJobDurationList{
+		Code:    fiber.StatusOK,
+		Message: "success",
+		Jobs:    recentJobs,
 	})
 }
 

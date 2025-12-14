@@ -116,7 +116,7 @@ type JSONResultGetOldJobs struct {
 	Topics  TopicOldJobsMap `json:"topics"`  // The oldest jobs by topic
 }
 
-type StalledJobResult struct {
+type JobDurationResult struct {
 	JobUUID  string `json:"id"`       // The job UUID
 	Topic    string `json:"topic"`    // The job topic
 	State    string `json:"state"`    // The job state
@@ -124,10 +124,10 @@ type StalledJobResult struct {
 	Duration uint   `json:"duration"` // The job duration in milliseconds
 }
 
-type JSONResultGetStalledJobs struct {
-	Code    int                `json:"code"`    // The result code
-	Message string             `json:"message"` // The result message
-	Jobs    []StalledJobResult `json:"jobs"`    // The stalled jobs
+type JSONResultJobDurationList struct {
+	Code    int                 `json:"code"`    // The result code
+	Message string              `json:"message"` // The result message
+	Jobs    []JobDurationResult `json:"jobs"`    // The jobs
 }
 
 type HTTPError struct {
