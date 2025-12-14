@@ -480,6 +480,35 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/jobs/recent": {
+            "get": {
+                "description": "Get jobs that have been running or queued for a short time",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Jobs"
+                ],
+                "summary": "Get recently started jobs",
+                "operationId": "jobs-get-recent",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Maximum job duration in minutes to consider recent (default 10, min 1, max 10080)",
+                        "name": "duration",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultJobDurationList"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/jobs/stalled": {
             "get": {
                 "description": "Get jobs that have been running or queued for an unusually long time",
@@ -503,7 +532,7 @@ const docTemplate = `{
                     "200": {
                         "description": "successful operation",
                         "schema": {
-                            "$ref": "#/definitions/web.JSONResultGetStalledJobs"
+                            "$ref": "#/definitions/web.JSONResultJobDurationList"
                         }
                     }
                 }
@@ -1446,26 +1475,6 @@ const docTemplate = `{
                 }
             }
         },
-        "web.JSONResultGetStalledJobs": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "description": "The result code",
-                    "type": "integer"
-                },
-                "jobs": {
-                    "description": "The stalled jobs",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/web.StalledJobResult"
-                    }
-                },
-                "message": {
-                    "description": "The result message",
-                    "type": "string"
-                }
-            }
-        },
         "web.JSONResultGetSystemInfo": {
             "type": "object",
             "properties": {
@@ -1558,6 +1567,26 @@ const docTemplate = `{
                 }
             }
         },
+        "web.JSONResultJobDurationList": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer"
+                },
+                "jobs": {
+                    "description": "The jobs",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/web.JobDurationResult"
+                    }
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string"
+                }
+            }
+        },
         "web.JSONResultPullJob": {
             "type": "object",
             "properties": {
@@ -1595,6 +1624,31 @@ const docTemplate = `{
                 }
             }
         },
+        "web.JobDurationResult": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "description": "The job creation timestamp in milliseconds",
+                    "type": "integer"
+                },
+                "duration": {
+                    "description": "The job duration in milliseconds",
+                    "type": "integer"
+                },
+                "id": {
+                    "description": "The job UUID",
+                    "type": "string"
+                },
+                "state": {
+                    "description": "The job state",
+                    "type": "string"
+                },
+                "topic": {
+                    "description": "The job topic",
+                    "type": "string"
+                }
+            }
+        },
         "web.ResourceBackendProvider": {
             "type": "object",
             "properties": {
@@ -1628,31 +1682,6 @@ const docTemplate = `{
                 },
                 "memory": {
                     "$ref": "#/definitions/web.ResourceMetric"
-                }
-            }
-        },
-        "web.StalledJobResult": {
-            "type": "object",
-            "properties": {
-                "created": {
-                    "description": "The job creation timestamp in milliseconds",
-                    "type": "integer"
-                },
-                "duration": {
-                    "description": "The job duration in milliseconds",
-                    "type": "integer"
-                },
-                "id": {
-                    "description": "The job UUID",
-                    "type": "string"
-                },
-                "state": {
-                    "description": "The job state",
-                    "type": "string"
-                },
-                "topic": {
-                    "description": "The job topic",
-                    "type": "string"
                 }
             }
         },

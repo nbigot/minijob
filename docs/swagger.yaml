@@ -449,20 +449,6 @@ definitions:
           $ref: '#/definitions/metrics.ResourceMetrics'
         type: array
     type: object
-  web.JSONResultGetStalledJobs:
-    properties:
-      code:
-        description: The result code
-        type: integer
-      jobs:
-        description: The stalled jobs
-        items:
-          $ref: '#/definitions/web.StalledJobResult'
-        type: array
-      message:
-        description: The result message
-        type: string
-    type: object
   web.JSONResultGetSystemInfo:
     properties:
       code:
@@ -528,6 +514,20 @@ definitions:
           $ref: '#/definitions/metrics.TopicMetrics'
         type: array
     type: object
+  web.JSONResultJobDurationList:
+    properties:
+      code:
+        description: The result code
+        type: integer
+      jobs:
+        description: The jobs
+        items:
+          $ref: '#/definitions/web.JobDurationResult'
+        type: array
+      message:
+        description: The result message
+        type: string
+    type: object
   web.JSONResultPullJob:
     properties:
       code:
@@ -555,6 +555,24 @@ definitions:
         example: success
         type: string
     type: object
+  web.JobDurationResult:
+    properties:
+      created:
+        description: The job creation timestamp in milliseconds
+        type: integer
+      duration:
+        description: The job duration in milliseconds
+        type: integer
+      id:
+        description: The job UUID
+        type: string
+      state:
+        description: The job state
+        type: string
+      topic:
+        description: The job topic
+        type: string
+    type: object
   web.ResourceBackendProvider:
     properties:
       label:
@@ -577,24 +595,6 @@ definitions:
         $ref: '#/definitions/web.ResourceMetric'
       memory:
         $ref: '#/definitions/web.ResourceMetric'
-    type: object
-  web.StalledJobResult:
-    properties:
-      created:
-        description: The job creation timestamp in milliseconds
-        type: integer
-      duration:
-        description: The job duration in milliseconds
-        type: integer
-      id:
-        description: The job UUID
-        type: string
-      state:
-        description: The job state
-        type: string
-      topic:
-        description: The job topic
-        type: string
     type: object
   web.TopOldJobsResult:
     properties:
@@ -931,6 +931,26 @@ paths:
       summary: Delete queued jobs
       tags:
       - Jobs
+  /api/v1/jobs/recent:
+    get:
+      description: Get jobs that have been running or queued for a short time
+      operationId: jobs-get-recent
+      parameters:
+      - description: Maximum job duration in minutes to consider recent (default 10,
+          min 1, max 10080)
+        in: query
+        name: duration
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: successful operation
+          schema:
+            $ref: '#/definitions/web.JSONResultJobDurationList'
+      summary: Get recently started jobs
+      tags:
+      - Jobs
   /api/v1/jobs/stalled:
     get:
       description: Get jobs that have been running or queued for an unusually long
@@ -948,7 +968,7 @@ paths:
         "200":
           description: successful operation
           schema:
-            $ref: '#/definitions/web.JSONResultGetStalledJobs'
+            $ref: '#/definitions/web.JSONResultJobDurationList'
       summary: Get stalled jobs
       tags:
       - Jobs
