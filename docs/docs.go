@@ -538,16 +538,37 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/metrics/jobs/stats": {
+        "/api/v1/metrics/jobs/activity": {
             "get": {
-                "description": "Get jobs metrics",
+                "description": "Get cumulative event counts for all job event types (Job Activity Metrics)",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Utils"
                 ],
-                "summary": "Get jobs metrics",
+                "summary": "Get job activity metrics",
+                "operationId": "jobs-activity-stats",
+                "responses": {
+                    "200": {
+                        "description": "successful operation",
+                        "schema": {
+                            "$ref": "#/definitions/web.JSONResultGetJobsCumulativeEventCount"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/jobs/processing": {
+            "get": {
+                "description": "Get current job counts and statistics grouped by job status (running, queued, succeeded, failed, etc.)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Utils"
+                ],
+                "summary": "Get job processing metrics by status",
                 "operationId": "jobs-metrics",
                 "responses": {
                     "200": {
@@ -1051,6 +1072,59 @@ const docTemplate = `{
                 "type": "string"
             }
         },
+        "metrics.JobActivityMetrics": {
+            "type": "object",
+            "properties": {
+                "canceled": {
+                    "description": "cumulative count of job canceled events",
+                    "type": "integer"
+                },
+                "created": {
+                    "description": "cumulative count of job created events",
+                    "type": "integer"
+                },
+                "delayed": {
+                    "description": "cumulative count of job delayed events",
+                    "type": "integer"
+                },
+                "deleted": {
+                    "description": "cumulative count of job deleted events",
+                    "type": "integer"
+                },
+                "enqueued": {
+                    "description": "cumulative count of job enqueued events",
+                    "type": "integer"
+                },
+                "failed": {
+                    "description": "cumulative count of job failed events",
+                    "type": "integer"
+                },
+                "hidden": {
+                    "description": "cumulative count of job hidden events",
+                    "type": "integer"
+                },
+                "pending": {
+                    "description": "cumulative count of job pending events",
+                    "type": "integer"
+                },
+                "started": {
+                    "description": "cumulative count of job started events",
+                    "type": "integer"
+                },
+                "succeeded": {
+                    "description": "cumulative count of job succeeded events",
+                    "type": "integer"
+                },
+                "terminated": {
+                    "description": "cumulative count of job terminated events",
+                    "type": "integer"
+                },
+                "timeout": {
+                    "description": "cumulative count of job timeout events",
+                    "type": "integer"
+                }
+            }
+        },
         "metrics.JobMetrics": {
             "type": "object",
             "properties": {
@@ -1360,6 +1434,29 @@ const docTemplate = `{
                 "totalpages": {
                     "description": "The total number of pages",
                     "type": "integer"
+                }
+            }
+        },
+        "web.JSONResultGetJobsCumulativeEventCount": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The result code",
+                    "type": "integer",
+                    "example": 200
+                },
+                "jobActivity": {
+                    "description": "The job activity metrics (cumulative event counts)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/metrics.JobActivityMetrics"
+                        }
+                    ]
+                },
+                "message": {
+                    "description": "The result message",
+                    "type": "string",
+                    "example": "success"
                 }
             }
         },

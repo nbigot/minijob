@@ -78,6 +78,23 @@ type JobStatsMetrics struct {
 	DeletedJobs   uint `json:"deletedJobs"`   // number of deleted jobs
 }
 
+// JobActivityMetrics holds cumulative event counts for all job event types
+// aggregated across all topics for displaying job processing rate charts
+type JobActivityMetrics struct {
+	Created    uint64 `json:"created"`    // cumulative count of job created events
+	Delayed    uint64 `json:"delayed"`    // cumulative count of job delayed events
+	Pending    uint64 `json:"pending"`    // cumulative count of job pending events
+	Enqueued   uint64 `json:"enqueued"`   // cumulative count of job enqueued events
+	Started    uint64 `json:"started"`    // cumulative count of job started events
+	Succeeded  uint64 `json:"succeeded"`  // cumulative count of job succeeded events
+	Failed     uint64 `json:"failed"`     // cumulative count of job failed events
+	Canceled   uint64 `json:"canceled"`   // cumulative count of job canceled events
+	Hidden     uint64 `json:"hidden"`     // cumulative count of job hidden events
+	Deleted    uint64 `json:"deleted"`    // cumulative count of job deleted events
+	Timeout    uint64 `json:"timeout"`    // cumulative count of job timeout events
+	Terminated uint64 `json:"terminated"` // cumulative count of job terminated events
+}
+
 type JobMetricsTopicMap map[string][]JobMetrics
 
 type JobMetricsTopicStatsMap map[string][]TopicMetrics
@@ -525,6 +542,12 @@ func (s *ServiceMetrics) GetJobMetricsByStatus() JobStatsMetrics {
 	})
 
 	return stats
+}
+
+// GetJobActivityMetrics returns cumulative event counts for all job event types
+// aggregated across all topics for displaying job activity charts
+func (s *ServiceMetrics) GetJobActivityMetrics() JobActivityMetrics {
+	return s.Metrics.GetJobEventCounters()
 }
 
 // UpdateTopicMetrics updates the pre-calculated TopicMetrics for a given topic and job

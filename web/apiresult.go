@@ -68,6 +68,12 @@ type JSONResultGetJobsMetrics struct {
 	Metrics metrics.JobStatsMetrics `json:"jobStats"`                  // The metrics
 }
 
+type JSONResultGetJobsCumulativeEventCount struct {
+	Code    int                        `json:"code" example:"200"`        // The result code
+	Message string                     `json:"message" example:"success"` // The result message
+	Metrics metrics.JobActivityMetrics `json:"jobActivity"`               // The job activity metrics (cumulative event counts)
+}
+
 type JSONResultGetJobsMetricsTopics struct {
 	Code    int                        `json:"code" example:"200"`        // The result code
 	Message string                     `json:"message" example:"success"` // The result message

@@ -222,6 +222,70 @@ func (m *PrometheusMetrics) OnEvent(ev event.ServiceEvent, jm *JobMetrics) {
 func (m *PrometheusMetrics) Shutdown() {
 }
 
+// GetJobEventCounters extracts cumulative event counts from JobsEventsCounter
+// aggregating across all topics to provide total counts for each event type
+func (m *PrometheusMetrics) GetJobEventCounters() JobActivityMetrics {
+	metrics := JobActivityMetrics{}
+
+	// Collect all metrics from the counter
+	metricChan := make(chan prometheus.Metric)
+	go func() {
+		m.JobsEventsCounter.Collect(metricChan)
+		close(metricChan)
+	}()
+
+	// Extract values and aggregate by event type
+	for metric := range metricChan {
+		pb := &dto.Metric{}
+		err := metric.Write(pb)
+		if err != nil {
+			continue
+		}
+
+		// Get event label value
+		var eventType string
+		for _, labelPair := range pb.Label {
+			if labelPair.GetName() == "event" {
+				eventType = labelPair.GetValue()
+				break
+			}
+		}
+
+		// Get counter value and aggregate by event type
+		if pb.Counter != nil {
+			value := uint64(pb.Counter.GetValue())
+			switch eventType {
+			case "Created":
+				metrics.Created += value
+			case "Delayed":
+				metrics.Delayed += value
+			case "Pending":
+				metrics.Pending += value
+			case "Enqueued":
+				metrics.Enqueued += value
+			case "Started":
+				metrics.Started += value
+			case "Succeeded":
+				metrics.Succeeded += value
+			case "Failed":
+				metrics.Failed += value
+			case "Canceled":
+				metrics.Canceled += value
+			case "Hidden":
+				metrics.Hidden += value
+			case "Deleted":
+				metrics.Deleted += value
+			case "Timeout":
+				metrics.Timeout += value
+			case "Terminated":
+				metrics.Terminated += value
+			}
+		}
+	}
+
+	return metrics
+}
+
 func (m *PrometheusMetrics) UpdateJobDurationGauges(p *UpdateJobDurationPercentilesByTopic) {
 	m.JobDurationPercentilesGauge.Reset()
 	cptPercentiles := len(BucketsJobDurationPercentiles)

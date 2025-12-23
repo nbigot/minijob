@@ -82,6 +82,7 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 		apiObservability.Get("/jobs/processing", w.GetJobsMetrics)
 		apiObservability.Get("/jobs/recent", w.GetRecentJobs)
 		apiObservability.Get("/jobs/stalled", w.GetStalledJobs)
+		apiObservability.Get("/jobs/activity", w.GetJobsCumulativeEventCount)
 		apiObservability.Get("/jobs/topics", w.GetJobsMetricsTopics)
 		apiObservability.Get("/resources", w.GetResourcesMetrics)
 		apiObservability.Get("/topics", w.GetTopicsStats)

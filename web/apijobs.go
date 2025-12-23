@@ -671,19 +671,38 @@ func (w *WebAPIServer) ChangeVisibilityTimeoutJob(c *fiber.Ctx) error {
 }
 
 // GetJobsMetrics godoc
-// @Summary Get jobs metrics
-// @Description Get jobs metrics
+// @Summary Get job processing metrics by status
+// @Description Get current job counts and statistics grouped by job status (running, queued, succeeded, failed, etc.)
 // @ID jobs-metrics
 // @Produce json
 // @Tags Utils
 // @success 200 {object} web.JSONResultGetJobsMetrics{} "successful operation"
-// @Router /api/v1/metrics/jobs/stats [get]
+// @Router /api/v1/metrics/jobs/processing [get]
 func (w *WebAPIServer) GetJobsMetrics(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetJobsMetrics")
 	result := JSONResultGetJobsMetrics{
 		Code:    fiber.StatusOK,
 		Message: "success",
 		Metrics: w.service.GetMetrics().(*metrics.ServiceMetrics).GetJobMetricsByStatus(),
+	}
+
+	// return the metrics as json
+	return c.JSON(result)
+}
+
+// GetJobsCumulativeEventCount godoc
+// @Summary Get job activity metrics
+// @Description Get cumulative event counts for all job event types (Job Activity Metrics)
+// @ID jobs-activity-stats
+// @Produce json
+// @Tags Utils
+// @success 200 {object} web.JSONResultGetJobsCumulativeEventCount{} "successful operation"
+// @Router /api/v1/metrics/jobs/activity [get]
+func (w *WebAPIServer) GetJobsCumulativeEventCount(c *fiber.Ctx) error {
+	result := JSONResultGetJobsCumulativeEventCount{
+		Code:    fiber.StatusOK,
+		Message: "success",
+		Metrics: w.service.GetMetrics().(*metrics.ServiceMetrics).GetJobActivityMetrics(),
 	}
 
 	// return the metrics as json
