@@ -79,8 +79,10 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 	if w.appConfig.WebServer.Metrics.Enable {
 		apiObservability := api.Group("/metrics")
-		apiObservability.Get("/jobs/topics", w.GetJobsMetricsTopics)
+		apiObservability.Get("/jobs/processing", w.GetJobsMetrics)
+		apiObservability.Get("/jobs/recent", w.GetRecentJobs)
 		apiObservability.Get("/jobs/stalled", w.GetStalledJobs)
+		apiObservability.Get("/jobs/topics", w.GetJobsMetricsTopics)
 		apiObservability.Get("/resources", w.GetResourcesMetrics)
 		apiObservability.Get("/topics", w.GetTopicsStats)
 	}
