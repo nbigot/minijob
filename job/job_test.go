@@ -103,7 +103,7 @@ func TestJob_MarshalJSON(t *testing.T) {
 		state:         JobPending,
 	}
 
-	expectedJSON := `{"id":"0190e951-c29a-70aa-ba59-18be4abe9700","topic":"topic1","priority":0,"properties":{"key1":"value1","key2":42,"key3":true,"key4":["a","b","c"]},"history":[],"lockResources":["resource1","resource2","resource3:abc:def"],"userAgent":"user agent test","requester":"unit-test","name":"","sessionId":"0190e951-c29a-70aa-ba59-18be4abe97a1","traceId":"0190e951-c29a-70aa-ba59-18be4abe97a0","visibilityTimeout":0,"startAfter":0}`
+	expectedJSON := `{"id":"0190e951-c29a-70aa-ba59-18be4abe9700","topic":"topic1","priority":0,"properties":{"key1":"value1","key2":42,"key3":true,"key4":["a","b","c"]},"history":[],"lockResources":["resource1","resource2","resource3:abc:def"],"userAgent":"user agent test","requester":"unit-test","name":"","sessionId":"0190e951-c29a-70aa-ba59-18be4abe97a1","traceId":"0190e951-c29a-70aa-ba59-18be4abe97a0","visibilityTimeout":0,"startAfter":0,"callbackUrl":""}`
 
 	resultJSON, err := json.Marshal(j)
 	if err != nil {
