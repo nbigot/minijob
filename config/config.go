@@ -120,7 +120,17 @@ func LoadConfig(filename string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error while opening configuration file %s : %s", filename, err.Error())
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Logger.Error(
+				"Failed to close config file",
+				zap.String("topic", "config"),
+				zap.String("method", "LoadConfig"),
+				zap.String("filename", filename),
+				zap.Error(err),
+			)
+		}
+	}()
 
 	err = yaml.NewDecoder(file).Decode(&configuration)
 	if err != nil {

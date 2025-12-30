@@ -20,7 +20,11 @@ func (e *EventLoggerObserver) Init() error {
 
 func (e *EventLoggerObserver) Shutdown() {
 	if e.file != nil {
-		e.file.Close()
+		if err := e.file.Close(); err != nil {
+			// Log error but continue shutdown
+			// We don't have a logger here, so we can only use panic or ignore
+			// For shutdown, it's generally better to continue
+		}
 		e.file = nil
 	}
 }

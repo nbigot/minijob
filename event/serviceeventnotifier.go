@@ -9,7 +9,9 @@ type ServiceEventNotifier struct {
 
 func (s *ServiceEventNotifier) Init() error {
 	for _, observer := range s.Observers {
-		observer.Init()
+		if err := observer.Init(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

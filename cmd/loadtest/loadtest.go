@@ -917,7 +917,6 @@ func checkPing() bool {
 
 func main() {
 	fmt.Println("Load test client")
-	rand.Seed(time.Now().UnixNano())
 	argparse()
 	if !checkPing() {
 		fmt.Println("Exiting due to server not being alive.")

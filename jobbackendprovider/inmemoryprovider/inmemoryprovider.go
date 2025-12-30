@@ -290,7 +290,14 @@ func (p *InMemoryJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {
 
 	switch ev {
 	case event.ServiceEventJobDeletedAll:
-		p.OnJobsDeleted()
+		if err := p.OnJobsDeleted(); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobsDeleted event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyEvent"),
+				zap.Error(err),
+			)
+		}
 	}
 }
 
@@ -304,27 +311,115 @@ func (p *InMemoryJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.Service
 
 	switch ev {
 	case event.ServiceEventJobCreated:
-		p.OnJobCreated(j)
+		if err := p.OnJobCreated(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobCreated event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobDelayed:
-		p.OnJobDelayed(j)
+		if err := p.OnJobDelayed(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobDelayed event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobPending:
-		p.OnJobPending(j)
+		if err := p.OnJobPending(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobPending event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobEnqueued:
-		p.OnJobEnqueued(j)
+		if err := p.OnJobEnqueued(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobEnqueued event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobDeleted:
-		p.OnJobDeleted(j.JobUUID)
+		if err := p.OnJobDeleted(j.JobUUID); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobDeleted event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobStarted:
-		p.OnJobStarted(j)
+		if err := p.OnJobStarted(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobStarted event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobSucceeded:
-		p.OnJobSucceeded(j)
+		if err := p.OnJobSucceeded(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobSucceeded event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobCanceled:
-		p.OnJobCanceled(j)
+		if err := p.OnJobCanceled(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobCanceled event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobFailed:
-		p.OnJobFailed(j)
+		if err := p.OnJobFailed(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobFailed event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobHidden:
-		p.OnJobHidden(j)
+		if err := p.OnJobHidden(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobHidden event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	case event.ServiceEventJobTerminated:
-		p.OnJobTerminated(j)
+		if err := p.OnJobTerminated(j); err != nil {
+			p.logger.Error(
+				"Failed to handle OnJobTerminated event",
+				zap.String("topic", "backendProvider"),
+				zap.String("method", "NotifyJobEvent"),
+				zap.String("jobUUID", j.JobUUID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 }
 
