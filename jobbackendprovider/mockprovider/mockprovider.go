@@ -284,27 +284,27 @@ func (p *MockJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEven
 
 	switch ev {
 	case event.ServiceEventJobCreated:
-		p.OnJobCreated(j)
+		_ = p.OnJobCreated(j)
 	case event.ServiceEventJobDelayed:
-		p.OnJobDelayed(j)
+		_ = p.OnJobDelayed(j)
 	case event.ServiceEventJobPending:
-		p.OnJobPending(j)
+		_ = p.OnJobPending(j)
 	case event.ServiceEventJobEnqueued:
-		p.OnJobEnqueued(j)
+		_ = p.OnJobEnqueued(j)
 	case event.ServiceEventJobDeleted:
-		p.OnJobDeleted(j.JobUUID)
+		_ = p.OnJobDeleted(j.JobUUID)
 	case event.ServiceEventJobStarted:
-		p.OnJobStarted(j)
+		_ = p.OnJobStarted(j)
 	case event.ServiceEventJobSucceeded:
-		p.OnJobSucceeded(j)
+		_ = p.OnJobSucceeded(j)
 	case event.ServiceEventJobCanceled:
-		p.OnJobCanceled(j)
+		_ = p.OnJobCanceled(j)
 	case event.ServiceEventJobFailed:
-		p.OnJobFailed(j)
+		_ = p.OnJobFailed(j)
 	case event.ServiceEventJobHidden:
-		p.OnJobHidden(j)
+		_ = p.OnJobHidden(j)
 	case event.ServiceEventJobTerminated:
-		p.OnJobTerminated(j)
+		_ = p.OnJobTerminated(j)
 	}
 }
 

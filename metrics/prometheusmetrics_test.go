@@ -12,7 +12,8 @@ import (
 
 func TestPrometheusMetrics_Init(t *testing.T) {
 	prometheusMetrics := PrometheusMetrics{}
-	prometheusMetrics.Init()
+	err := prometheusMetrics.Init()
+	require.NoError(t, err)
 
 	assert.NotNil(t, prometheusMetrics.Registry)
 	assert.NotNil(t, prometheusMetrics.JobsEventsCounter)
@@ -22,7 +23,8 @@ func TestPrometheusMetrics_Init(t *testing.T) {
 
 func TestPrometheusMetrics_InitCustomMetrics(t *testing.T) {
 	prometheusMetrics := PrometheusMetrics{}
-	prometheusMetrics.Init()
+	err := prometheusMetrics.Init()
+	require.NoError(t, err)
 
 	topic := "test_topic"
 	prometheusMetrics.InitCustomMetrics(topic)
@@ -40,7 +42,8 @@ func TestPrometheusMetrics_InitCustomMetrics(t *testing.T) {
 
 func TestPrometheusMetrics_SetGauges(t *testing.T) {
 	prometheusMetrics := PrometheusMetrics{}
-	prometheusMetrics.Init()
+	err := prometheusMetrics.Init()
+	require.NoError(t, err)
 
 	topic := "test_topic"
 	jm := &JobMetrics{

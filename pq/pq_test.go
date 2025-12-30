@@ -194,7 +194,7 @@ func TestLen(t *testing.T) {
 		t.Errorf("Expected length 2, got %d", pq.Len())
 	}
 
-	pq.Dequeue()
+	_, _, _ = pq.Dequeue()
 	if pq.Len() != 1 {
 		t.Errorf("Expected length 1, got %d", pq.Len())
 	}
@@ -275,7 +275,7 @@ func TestIsEmpty(t *testing.T) {
 		t.Errorf("Expected false, got true")
 	}
 
-	pq.Dequeue()
+	_, _, _ = pq.Dequeue()
 	if !pq.IsEmpty() {
 		t.Errorf("Expected true, got false")
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Tests
@@ -287,7 +288,8 @@ func TestServiceMetrics_UpdateJobStatistics(t *testing.T) {
 
 func TestServiceMetrics_UpdateJobDurationPercentiles(t *testing.T) {
 	serviceMetrics := NewServiceMetrics(true)
-	serviceMetrics.Init()
+	err := serviceMetrics.Init()
+	require.NoError(t, err)
 
 	// Create jobs
 	jobMap := make(job.JobMap)
