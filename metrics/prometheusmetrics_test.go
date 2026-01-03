@@ -65,39 +65,57 @@ func TestPrometheusMetrics_SetGauges(t *testing.T) {
 	var metric dto.Metric
 
 	// Created
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Created", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Created", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusCreated), *metric.Gauge.Value)
 
 	// Delayed
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Delayed", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Delayed", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusDelayed), *metric.Gauge.Value)
 
 	// Pending
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Pending", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Pending", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusPending), *metric.Gauge.Value)
 
 	// Queued
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Queued", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Queued", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusQueued), *metric.Gauge.Value)
 
 	// Running
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Running", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Running", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusRunning), *metric.Gauge.Value)
 
 	// Succeeded
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Succeeded", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Succeeded", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusSucceeded), *metric.Gauge.Value)
 
 	// Failed
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Failed", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Failed", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusFailed), *metric.Gauge.Value)
 
 	// Hidden
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Hidden", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Hidden", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusHidden), *metric.Gauge.Value)
 
 	// Canceled
-	prometheusMetrics.JobsStatusGauge.WithLabelValues("Canceled", topic).Write(&metric)
+	if err := prometheusMetrics.JobsStatusGauge.WithLabelValues("Canceled", topic).Write(&metric); err != nil {
+		t.Fatalf("Failed to write metric: %v", err)
+	}
 	assert.Equal(t, float64(jm.JobsStatusCanceled), *metric.Gauge.Value)
 }
 

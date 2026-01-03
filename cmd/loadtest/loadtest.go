@@ -173,7 +173,11 @@ func DeleteAllJobs(client *http.Client) error {
 		fmt.Println("Error making request:", err)
 		return err
 	}
-	defer res.Body.Close()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			fmt.Println("Error closing response body:", err)
+		}
+	}()
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
@@ -324,8 +328,12 @@ func createNewJob(client *http.Client, jobDesc string) (jobUUID string, err erro
 				fmt.Printf("Error at %s:%d: %s\n", file, line, err.Error())
 				if res != nil {
 					print("close response\n")
-					io.Copy(io.Discard, res.Body)
-					res.Body.Close()
+					if _, err := io.Copy(io.Discard, res.Body); err != nil {
+						fmt.Println("Error discarding response body:", err)
+					}
+					if err := res.Body.Close(); err != nil {
+						fmt.Println("Error closing response body:", err)
+					}
 				}
 				// print("Connection refused\n")
 				// time.Sleep(10 * time.Millisecond)
@@ -356,7 +364,9 @@ func createNewJob(client *http.Client, jobDesc string) (jobUUID string, err erro
 				fmt.Println(string(body))
 			}
 			// io.Copy(ioutil.Discard, res.Body)
-			res.Body.Close()
+			if err := res.Body.Close(); err != nil {
+				fmt.Println("Error closing response body:", err)
+			}
 			return "", fmt.Errorf("HTTP response code: %d", res.StatusCode)
 		}
 
@@ -367,7 +377,9 @@ func createNewJob(client *http.Client, jobDesc string) (jobUUID string, err erro
 		body, err := io.ReadAll(res.Body)
 
 		// close the connection to the server to free the connection
-		res.Body.Close()
+		if err := res.Body.Close(); err != nil {
+			fmt.Println("Error closing response body:", err)
+		}
 
 		if err != nil {
 			return "", err
@@ -422,7 +434,9 @@ func setJobVisibilityTimeout(client *http.Client, jobUUID string, timeoutSec int
 	res, err := client.Do(req)
 	// don't care about eventual errors
 	if res != nil {
-		res.Body.Close()
+		if err := res.Body.Close(); err != nil {
+			fmt.Println("Error closing response body:", err)
+		}
 	}
 
 	return err
@@ -438,7 +452,9 @@ func jobProducer(client *http.Client, jobDesc string) error {
 		// 10% chance to change the job's visibility timeout
 		if rand.Intn(10) == 0 {
 			// change the job's visibility timeout
-			setJobVisibilityTimeout(client, jobUUID, 2+rand.Intn(5))
+			if err := setJobVisibilityTimeout(client, jobUUID, 2+rand.Intn(5)); err != nil {
+				fmt.Println("Error setting job visibility timeout:", err)
+			}
 		}
 	}
 
@@ -540,7 +556,11 @@ func pull_job_from_queue(client *http.Client, topic string, monkeyTestLevel int)
 	if err != nil {
 		return "", false, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Println("Error closing response body:", err)
+		}
+	}()
 
 	// Read the response body
 	body, err := io.ReadAll(resp.Body)
@@ -626,7 +646,11 @@ func SetJobStatus(client *http.Client, jobUUID string, urlSuffix string) (bodyRe
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Println("Error closing response body:", err)
+		}
+	}()
 
 	// Read the response body
 	response, err := io.ReadAll(resp.Body)
@@ -742,11 +766,7 @@ func consume(client *http.Client, func_job_consumer func(*http.Client, string) (
 
 	// pull the job from the queue
 	// complete the job
-	for {
-		// if no more jobs to consume, exit
-		if producersDone.Load() && producerCompleted.Load() == consumerCompleted.Load() {
-			break
-		}
+	for !producersDone.Load() || producerCompleted.Load() != consumerCompleted.Load() {
 		found_job, job_completed, err := func_job_consumer(client, ALL_TOPICS)
 		switch {
 		case err != nil:
@@ -823,7 +843,9 @@ func run_load_test(label string, numWorkers int, iterations int, func_job_produc
 
 	// Delete all jobs
 	if *deleteAllJobsBeforeStart {
-		DeleteAllJobs(&client)
+		if err := DeleteAllJobs(&client); err != nil {
+			fmt.Println("Error deleting all jobs:", err)
+		}
 	}
 
 	// Start producers goroutines
@@ -902,8 +924,12 @@ func checkPing() bool {
 	if err != nil {
 		return false
 	}
-	io.Copy(io.Discard, res.Body)
-	res.Body.Close()
+	if _, err := io.Copy(io.Discard, res.Body); err != nil {
+		fmt.Println("Error discarding response body:", err)
+	}
+	if err := res.Body.Close(); err != nil {
+		fmt.Println("Error closing response body:", err)
+	}
 
 	// check http response code
 	if res.StatusCode != 200 {

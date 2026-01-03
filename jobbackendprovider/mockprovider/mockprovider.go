@@ -39,7 +39,7 @@ func (p *MockJobBackendProvider) Init() error {
 }
 
 func (p *MockJobBackendProvider) Shutdown() {
-	p.Stop()
+	_ = p.Stop() // Ignore error during shutdown
 }
 
 func (p *MockJobBackendProvider) Stop() error {
@@ -270,7 +270,7 @@ func (p *MockJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {
 
 	switch ev {
 	case event.ServiceEventJobDeletedAll:
-		p.OnJobsDeleted()
+		_ = p.OnJobsDeleted() // Ignore error
 	}
 }
 

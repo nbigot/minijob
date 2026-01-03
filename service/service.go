@@ -73,7 +73,14 @@ func (svc *Service) Init() error {
 		svc.eventNotifier.Register(svc.eventLogger)
 	}
 	svc.eventNotifier.Register(svc.callbackService)
-	svc.eventNotifier.Init()
+	if err := svc.eventNotifier.Init(); err != nil {
+		log.Logger.Error("Error initializing event notifier",
+			zap.String("topic", "service"),
+			zap.String("method", "Init"),
+			zap.Error(err),
+		)
+		return err
+	}
 
 	err = svc.LoadJobs()
 	if err != nil {
@@ -448,10 +455,10 @@ func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
 	svc.mapMutex.Lock()
 
 	// Remove the job from the retry queue (if it is in the retry queue)
-	svc.pqRetryJobs.Remove(j)
+	_ = svc.pqRetryJobs.Remove(j) // Ignore error - job might not be in the queue
 
 	// Remove the job from the delayed queue (if it is in the delayed queue)
-	svc.pqDelayedJobs.Remove(j)
+	_ = svc.pqDelayedJobs.Remove(j) // Ignore error - job might not be in the queue
 
 	// delete uuid from hashmap
 	delete(svc.jobs, jobUUID)
@@ -484,7 +491,7 @@ func (svc *Service) DeleteAllJobs() error {
 	svc.pqDelayedJobs.Clear()
 	svc.jobs = make(job.JobMap)
 	svc.pendingJobs = make(job.JobMap)
-	svc.UnlockAllResources()
+	_ = svc.UnlockAllResources() // Ignore error during deletion
 	svc.eventNotifier.NotifyEvent(event.ServiceEventJobDeletedAll)
 	return nil
 }

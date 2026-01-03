@@ -135,7 +135,10 @@ func (cs *CallbackService) sendCallback(callbackURL string, payload CallbackPayl
 			continue
 		}
 
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			lastErr = fmt.Errorf("failed to close response body: %w", err)
+			continue
+		}
 
 		// Consider 2xx status codes as success
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -145,7 +148,7 @@ func (cs *CallbackService) sendCallback(callbackURL string, payload CallbackPayl
 		lastErr = fmt.Errorf("callback returned status %d", resp.StatusCode)
 	}
 
-	return fmt.Errorf("callback failed after %d attempts: %w", cs.maxRetries+1, lastErr)
+	return fmt.Errorf("failed to send callback after %d attempts: %w", cs.maxRetries+1, lastErr)
 }
 
 // SetLogger sets the logger for the callback service

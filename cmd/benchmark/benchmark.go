@@ -15,9 +15,13 @@ func makeHTTPRequest() {
 	}
 	// Process the response here
 	// discard the body of the response to free the connection
-	io.Copy(io.Discard, resp.Body)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		fmt.Println("Error discarding response body:", err)
+	}
 	// close the connection to the server to free the connection
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		fmt.Println("Error closing response body:", err)
+	}
 }
 
 func createJob() {

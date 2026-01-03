@@ -49,7 +49,7 @@ func (p *InMemoryJobBackendProvider) Init() error {
 }
 
 func (p *InMemoryJobBackendProvider) Shutdown() {
-	p.Stop()
+	_ = p.Stop() // Ignore error during shutdown
 }
 
 func (p *InMemoryJobBackendProvider) Stop() error {

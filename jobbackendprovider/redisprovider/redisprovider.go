@@ -475,7 +475,7 @@ func (p *RedisJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {
 
 	switch ev {
 	case event.ServiceEventJobDeletedAll:
-		p.OnJobsDeleted()
+		_ = p.OnJobsDeleted() // Ignore error
 	}
 }
 

@@ -51,7 +51,11 @@ func (s *DBFileStorage) Load() (job.JobMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			s.logger.Error("Error closing file", zap.Error(err))
+		}
+	}()
 
 	jsonDecoder := json.NewDecoder(file)
 	data := DBStorageFileStruct{}
