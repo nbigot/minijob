@@ -417,6 +417,9 @@ func TestServiceMetrics_Concurrent(t *testing.T) {
 	serviceMetrics := NewServiceMetrics(true)
 	topic := "test-topic"
 
+	// Pre-create the topic to avoid race condition during concurrent creation
+	_ = serviceMetrics.GetMetricByTopic(topic)
+
 	// Test concurrent access to metrics
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -948,10 +951,11 @@ func TestServiceMetrics_GetResourcesMetrics(t *testing.T) {
 	// Verify lock durations are calculated
 	for _, m := range metrics {
 		assert.Greater(t, m.LockDuration, int64(0))
-		if m.ResourceName == "resource1" {
+		switch m.ResourceName {
+		case "resource1":
 			assert.GreaterOrEqual(t, m.LockDuration, int64(10))
 			assert.Equal(t, "test-topic", m.Topic)
-		} else if m.ResourceName == "resource2" {
+		case "resource2":
 			assert.GreaterOrEqual(t, m.LockDuration, int64(15))
 			assert.Equal(t, "test-topic-2", m.Topic)
 		}
