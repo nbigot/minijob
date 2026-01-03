@@ -35,21 +35,24 @@ type TopicCompletedJobStats struct {
 
 // note: a counter represents a continuously increasing value, unlike a gauge, and does not go down
 type JobMetrics struct {
-	ResourcesLockedCount uint `json:"resourcesLockedCount"` // current number of locked resources
-	JobsCounterDeleted   uint `json:"jobsCounterDeleted"`   // total number of deleted jobs (ever)
-	JobsExisting         uint `json:"jobsExisting"`         // current number of existing jobs
-	JobsStatusCreated    uint `json:"jobsStatusCreated"`    // current number of created jobs
-	JobsStatusDelayed    uint `json:"jobsStatusDelayed"`    // current number of delayed jobs
-	JobsStatusPending    uint `json:"jobsStatusPending"`    // current number of pending jobs
-	JobsStatusQueued     uint `json:"jobsStatusQueued"`     // current number of queued jobs
-	JobsStatusRunning    uint `json:"jobsStatusRunning"`    // current number of running jobs
-	JobsStatusSucceeded  uint `json:"jobsStatusSucceeded"`  // current number of succeeded jobs
-	JobsStatusFailed     uint `json:"jobsStatusFailed"`     // current number of failed jobs
-	JobsStatusHidden     uint `json:"jobsStatusHidden"`     // current number of hidden jobs
-	JobsStatusCanceled   uint `json:"jobsStatusCanceled"`   // current number of canceled jobs
+	mu                   sync.Mutex `json:"-"`                    // mutex for thread-safe access
+	ResourcesLockedCount uint       `json:"resourcesLockedCount"` // current number of locked resources
+	JobsCounterDeleted   uint       `json:"jobsCounterDeleted"`   // total number of deleted jobs (ever)
+	JobsExisting         uint       `json:"jobsExisting"`         // current number of existing jobs
+	JobsStatusCreated    uint       `json:"jobsStatusCreated"`    // current number of created jobs
+	JobsStatusDelayed    uint       `json:"jobsStatusDelayed"`    // current number of delayed jobs
+	JobsStatusPending    uint       `json:"jobsStatusPending"`    // current number of pending jobs
+	JobsStatusQueued     uint       `json:"jobsStatusQueued"`     // current number of queued jobs
+	JobsStatusRunning    uint       `json:"jobsStatusRunning"`    // current number of running jobs
+	JobsStatusSucceeded  uint       `json:"jobsStatusSucceeded"`  // current number of succeeded jobs
+	JobsStatusFailed     uint       `json:"jobsStatusFailed"`     // current number of failed jobs
+	JobsStatusHidden     uint       `json:"jobsStatusHidden"`     // current number of hidden jobs
+	JobsStatusCanceled   uint       `json:"jobsStatusCanceled"`   // current number of canceled jobs
 }
 
 func (j *JobMetrics) Clear() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	j.ResourcesLockedCount = 0
 	j.JobsExisting = 0
 	j.JobsStatusCreated = 0
@@ -95,7 +98,7 @@ type JobActivityMetrics struct {
 	Terminated uint64 `json:"terminated"` // cumulative count of job terminated events
 }
 
-type JobMetricsTopicMap map[string][]JobMetrics
+type JobMetricsTopicMap map[string][]*JobMetrics
 
 type JobMetricsTopicStatsMap map[string][]TopicMetrics
 
@@ -178,6 +181,9 @@ func (s *ServiceMetrics) OnJobStateChange(previousState job.JobState, newState j
 	if previousState == newState {
 		return
 	}
+
+	jobMetrics.mu.Lock()
+	defer jobMetrics.mu.Unlock()
 
 	switch previousState {
 	case job.JobCreated:
@@ -512,7 +518,7 @@ func (s *ServiceMetrics) GetJobMetricsByTopicMap() JobMetricsTopicMap {
 	s.JobMetricsByTopicMap.Range(func(key, value interface{}) bool {
 		topic := key.(string)
 		jobMetrics := value.(*JobMetrics)
-		jobMetricsTopicMap[topic] = append(jobMetricsTopicMap[topic], *jobMetrics)
+		jobMetricsTopicMap[topic] = append(jobMetricsTopicMap[topic], jobMetrics)
 		return true
 	})
 

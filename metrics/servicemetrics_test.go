@@ -480,10 +480,10 @@ func TestServiceMetrics_GetJobMetricsByTopicMap(t *testing.T) {
 	assert.Equal(t, uint(4), result[topic2][0].JobsStatusCreated)
 	assert.Equal(t, uint(6), result[topic2][0].JobsStatusRunning)
 
-	// Verify that changes to the original metrics are not reflected in the result
-	// (i.e., the function returns a copy, not references)
+	// Verify that the result contains references to the original metrics
+	// (changes to original will be reflected in the result since we store pointers)
 	metrics1.JobsExisting = 99
-	assert.Equal(t, uint(5), result[topic1][0].JobsExisting)
+	assert.Equal(t, uint(99), result[topic1][0].JobsExisting)
 }
 
 func TestServiceMetrics_GetTopicMetrics(t *testing.T) {
@@ -906,4 +906,290 @@ func TestServiceMetrics_TopicMetrics_ZeroDivision(t *testing.T) {
 	stats := serviceMetrics.GetTopicsStats()
 	assert.Equal(t, 1, len(stats))
 	assert.Equal(t, float64(0.0), stats[0].PercentJobs)
+}
+
+func TestServiceMetrics_Shutdown(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	// Call Shutdown - should not panic
+	serviceMetrics.Shutdown()
+}
+
+func TestServiceMetrics_GetResourcesMetrics(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+
+	// Initially should be empty
+	metrics := serviceMetrics.GetResourcesMetrics()
+	assert.Equal(t, 0, len(metrics))
+
+	// Add some resource metrics
+	startTime := time.Now().Unix() - 10 // 10 seconds ago
+	jobUUID1, _ := uuid.NewV7()
+	serviceMetrics.ResourceMetricsMap.Store("resource1", &ResourceMetrics{
+		ResourceName: "resource1",
+		JobUUID:      jobUUID1,
+		Topic:        "test-topic",
+		StartTime:    startTime,
+	})
+	jobUUID2, _ := uuid.NewV7()
+	serviceMetrics.ResourceMetricsMap.Store("resource2", &ResourceMetrics{
+		ResourceName: "resource2",
+		JobUUID:      jobUUID2,
+		Topic:        "test-topic-2",
+		StartTime:    startTime - 5, // 15 seconds ago
+	})
+
+	// Get metrics
+	metrics = serviceMetrics.GetResourcesMetrics()
+	assert.Equal(t, 2, len(metrics))
+
+	// Verify lock durations are calculated
+	for _, m := range metrics {
+		assert.Greater(t, m.LockDuration, int64(0))
+		if m.ResourceName == "resource1" {
+			assert.GreaterOrEqual(t, m.LockDuration, int64(10))
+			assert.Equal(t, "test-topic", m.Topic)
+		} else if m.ResourceName == "resource2" {
+			assert.GreaterOrEqual(t, m.LockDuration, int64(15))
+			assert.Equal(t, "test-topic-2", m.Topic)
+		}
+	}
+}
+
+func TestServiceMetrics_GetJobMetricsByStatus(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+
+	// Initially all should be zero
+	stats := serviceMetrics.GetJobMetricsByStatus()
+	assert.Equal(t, uint(0), stats.ExistingJobs)
+	assert.Equal(t, uint(0), stats.CreatedJobs)
+
+	// Add metrics for multiple topics
+	topic1 := "topic1"
+	topic2 := "topic2"
+
+	metrics1 := serviceMetrics.AddTopic(topic1)
+	metrics1.JobsExisting = 5
+	metrics1.JobsStatusCreated = 1
+	metrics1.JobsStatusDelayed = 2
+	metrics1.JobsStatusPending = 1
+	metrics1.JobsStatusQueued = 1
+	metrics1.JobsStatusRunning = 3
+	metrics1.JobsStatusSucceeded = 10
+	metrics1.JobsStatusFailed = 2
+	metrics1.JobsStatusHidden = 1
+	metrics1.JobsStatusCanceled = 1
+	metrics1.JobsCounterDeleted = 5
+
+	metrics2 := serviceMetrics.AddTopic(topic2)
+	metrics2.JobsExisting = 3
+	metrics2.JobsStatusCreated = 2
+	metrics2.JobsStatusRunning = 1
+	metrics2.JobsStatusSucceeded = 5
+	metrics2.JobsStatusFailed = 1
+	metrics2.JobsCounterDeleted = 2
+
+	// Get aggregated stats
+	stats = serviceMetrics.GetJobMetricsByStatus()
+	assert.Equal(t, uint(8), stats.ExistingJobs)   // 5 + 3
+	assert.Equal(t, uint(3), stats.CreatedJobs)    // 1 + 2
+	assert.Equal(t, uint(2), stats.DelayedJobs)    // 2 + 0
+	assert.Equal(t, uint(1), stats.PendingJobs)    // 1 + 0
+	assert.Equal(t, uint(1), stats.QueuedJobs)     // 1 + 0
+	assert.Equal(t, uint(4), stats.RunningJobs)    // 3 + 1
+	assert.Equal(t, uint(15), stats.SucceededJobs) // 10 + 5
+	assert.Equal(t, uint(3), stats.FailedJobs)     // 2 + 1
+	assert.Equal(t, uint(1), stats.HiddenJobs)     // 1 + 0
+	assert.Equal(t, uint(1), stats.CanceledJobs)   // 1 + 0
+	assert.Equal(t, uint(7), stats.DeletedJobs)    // 5 + 2
+}
+
+func TestServiceMetrics_GetJobActivityMetrics(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	// Get activity metrics - should not panic
+	metrics := serviceMetrics.GetJobActivityMetrics()
+
+	// Verify structure exists (values depend on prometheus metrics)
+	_ = metrics.Created
+	_ = metrics.Succeeded
+	_ = metrics.Failed
+}
+
+func TestServiceMetrics_OnJobStateChange_AllStates(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+	jobMetrics := &JobMetrics{}
+
+	// Test Delayed state
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobDelayed, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsExisting)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusDelayed)
+
+	serviceMetrics.OnJobStateChange(job.JobDelayed, job.JobPending, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusDelayed)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusPending)
+
+	// Test Queued state
+	serviceMetrics.OnJobStateChange(job.JobPending, job.JobQueued, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusPending)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusQueued)
+
+	serviceMetrics.OnJobStateChange(job.JobQueued, job.JobRunning, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusQueued)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusRunning)
+
+	// Test Hidden state
+	serviceMetrics.OnJobStateChange(job.JobRunning, job.JobHidden, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusRunning)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusHidden)
+
+	// Test Canceled state
+	serviceMetrics.OnJobStateChange(job.JobHidden, job.JobCanceled, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusHidden)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusCanceled)
+
+	// Test transitions FROM terminal states (for completeness)
+	serviceMetrics.OnJobStateChange(job.JobCanceled, job.JobDeleted, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusCanceled)
+	assert.Equal(t, uint(1), jobMetrics.JobsCounterDeleted)
+
+	// Test Succeeded to Deleted
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobSucceeded, jobMetrics)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusSucceeded)
+	serviceMetrics.OnJobStateChange(job.JobSucceeded, job.JobDeleted, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusSucceeded)
+	assert.Equal(t, uint(2), jobMetrics.JobsCounterDeleted)
+
+	// Test Failed to Deleted
+	serviceMetrics.OnJobStateChange(job.JobNoState, job.JobFailed, jobMetrics)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusFailed)
+	serviceMetrics.OnJobStateChange(job.JobFailed, job.JobDeleted, jobMetrics)
+	assert.Equal(t, uint(0), jobMetrics.JobsStatusFailed)
+	assert.Equal(t, uint(3), jobMetrics.JobsCounterDeleted)
+
+	// Test Deleted to something else (edge case)
+	serviceMetrics.OnJobStateChange(job.JobDeleted, job.JobCreated, jobMetrics)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusCreated)
+}
+
+func TestServiceMetrics_NotifyEvent_EmptyPollReceived(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	// Test ServiceEventEmptyPollReceived - should not panic
+	serviceMetrics.NotifyEvent(event.ServiceEventEmptyPollReceived)
+}
+
+func TestServiceMetrics_NotifyJobEvent_WithResources(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	jobUUID, _ := uuid.NewV7()
+	j := &job.Job{
+		JobUUID:       jobUUID,
+		Topic:         "test-topic",
+		LockResources: []string{"resource1", "resource2"},
+	}
+	now := time.Now().UnixMilli()
+	j.Init(j.JobUUID, now)
+	j.AddHistoryEvent(job.JobEventCreate, now)
+	j.AddHistoryEvent(job.JobEventEnqueue, now+100)
+	j.AddHistoryEvent(job.JobEventStart, now+200)
+
+	// Job queued with resources - resources should be locked
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobStarted)
+
+	// Verify resources are locked
+	resourceMetrics, exists := serviceMetrics.ResourceMetricsMap.Load("resource1")
+	assert.True(t, exists)
+	rm := resourceMetrics.(*ResourceMetrics)
+	assert.Equal(t, j.JobUUID, rm.JobUUID)
+	assert.Equal(t, "resource1", rm.ResourceName)
+
+	resourceMetrics2, exists := serviceMetrics.ResourceMetricsMap.Load("resource2")
+	assert.True(t, exists)
+	rm2 := resourceMetrics2.(*ResourceMetrics)
+	assert.Equal(t, j.JobUUID, rm2.JobUUID)
+
+	// Job completed - resources should be unlocked
+	j.AddHistoryEvent(job.JobEventSuccess, now+5000)
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobSucceeded)
+
+	// Verify resources are unlocked
+	_, exists = serviceMetrics.ResourceMetricsMap.Load("resource1")
+	assert.False(t, exists)
+	_, exists = serviceMetrics.ResourceMetricsMap.Load("resource2")
+	assert.False(t, exists)
+}
+
+func TestServiceMetrics_NotifyJobEvent_WithResourcesJobFailed(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+	err := serviceMetrics.Init()
+	assert.NoError(t, err)
+
+	jobUUID, _ := uuid.NewV7()
+	j := &job.Job{
+		JobUUID:       jobUUID,
+		Topic:         "test-topic",
+		LockResources: []string{"resource-fail"},
+	}
+	now := time.Now().UnixMilli()
+	j.Init(j.JobUUID, now)
+	j.AddHistoryEvent(job.JobEventEnqueue, now)
+	j.AddHistoryEvent(job.JobEventStart, now+100)
+
+	// Lock resources
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobStarted)
+
+	// Verify resource is locked
+	_, exists := serviceMetrics.ResourceMetricsMap.Load("resource-fail")
+	assert.True(t, exists)
+
+	// Job terminated (final failure) - resource should be unlocked
+	j.AddHistoryEvent(job.JobEventTerminate, now+2000)
+	serviceMetrics.NotifyJobEvent(j, event.ServiceEventJobFailed)
+
+	// Verify resource is unlocked
+	_, exists = serviceMetrics.ResourceMetricsMap.Load("resource-fail")
+	assert.False(t, exists)
+}
+
+func TestServiceMetrics_UpdateMetricsFromJobHistory_WithResources(t *testing.T) {
+	serviceMetrics := NewServiceMetrics(true)
+
+	jobUUID, _ := uuid.NewV7()
+	j := &job.Job{
+		JobUUID:       jobUUID,
+		Topic:         "test-topic",
+		LockResources: []string{"resource-hist-1", "resource-hist-2"},
+	}
+	now := time.Now().UnixMilli()
+	j.Init(j.JobUUID, now)
+	j.AddHistoryEvent(job.JobEventPending, now)
+	j.AddHistoryEvent(job.JobEventEnqueue, now+100)
+	j.AddHistoryEvent(job.JobEventStart, now+200)
+
+	// Update metrics from history - job is running with locked resources
+	serviceMetrics.UpdateMetricsFromJobHistory(j)
+
+	// Verify metrics were updated
+	jobMetrics := serviceMetrics.GetMetricByTopic("test-topic")
+	assert.Equal(t, uint(1), jobMetrics.JobsExisting)
+	assert.Equal(t, uint(1), jobMetrics.JobsStatusRunning)
+
+	// Verify resources are tracked
+	resourceMetrics, exists := serviceMetrics.ResourceMetricsMap.Load("resource-hist-1")
+	assert.True(t, exists)
+	rm := resourceMetrics.(*ResourceMetrics)
+	assert.Equal(t, j.JobUUID, rm.JobUUID)
+	assert.Equal(t, "test-topic", rm.Topic)
+
+	_, exists = serviceMetrics.ResourceMetricsMap.Load("resource-hist-2")
+	assert.True(t, exists)
 }
