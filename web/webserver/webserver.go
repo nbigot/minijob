@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
@@ -15,8 +16,6 @@ import (
 	"github.com/nbigot/minijob/web"
 	"go.uber.org/zap"
 )
-
-type ServerStatus int
 
 const (
 	ServerStatusNone = iota
@@ -31,7 +30,7 @@ type Server struct {
 	stopChan     chan bool
 	errsChan     chan error
 	ctx          context.Context
-	status       ServerStatus
+	status       int32
 	fiberConfig  fiber.Config
 	appConfig    *config.Config
 	logger       *zap.Logger
@@ -60,8 +59,9 @@ func NewServer(logger *zap.Logger, fiberConfig fiber.Config, appConfig *config.C
 }
 
 func (s *Server) Initialize(ctx context.Context, options ...ServerOption) error {
-	if s.status != ServerStatusNone {
-		return fmt.Errorf("cannot initilize server: invalid status code %d", s.status)
+	status := s.GetStatus()
+	if status != ServerStatusNone {
+		return fmt.Errorf("cannot initilize server: invalid status code %d", status)
 	}
 	s.ctx = ctx
 	signal.Notify(s.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -166,8 +166,9 @@ func (s *Server) DeRegisterConsul() error {
 }
 
 func (s *Server) Start() error {
-	if s.status != ServerStatusInitialized {
-		return fmt.Errorf("cannot start server: invalid status code %d", s.status)
+	status := s.GetStatus()
+	if status != ServerStatusInitialized {
+		return fmt.Errorf("cannot start server: invalid status code %d", status)
 	}
 	s.SetStatus(ServerStatusRunning)
 	s.Listen()
@@ -196,8 +197,12 @@ func (s *Server) GetApp() *fiber.App {
 	return s.webAPIServer.GetFiberApp()
 }
 
-func (s *Server) GetStatus() ServerStatus {
-	return s.status
+func (s *Server) GetStatus() int32 {
+	return atomic.LoadInt32(&s.status)
+}
+
+func (s *Server) SetStatus(status int32) {
+	atomic.StoreInt32(&s.status, status)
 }
 
 func (s *Server) GetWebConfig() *config.WebServerConfig {
@@ -238,6 +243,11 @@ func (s *Server) HandleSignals() error {
 				return fmt.Errorf("received signal hang up: %w", ErrRequestRestart)
 			case syscall.SIGTERM:
 				// stop server due to a signal SIGTERM
+				s.logger.Info("Received SIGTERM, shutting down server...", zap.String("topic", "server"), zap.String("method", "HandleSignals"))
+				return nil
+			case syscall.SIGINT:
+				// handle Ctrl+C (SIGINT)
+				s.logger.Info("Received SIGINT (Ctrl+C), shutting down server...", zap.String("topic", "server"), zap.String("method", "HandleSignals"))
 				return nil
 			}
 		case err := <-s.errsChan:
@@ -258,8 +268,9 @@ func (s *Server) shutdownListener() {
 
 func (s *Server) Shutdown() error {
 	// request to stop the server: the server will not yet be stopped at the end of this function
-	if s.status != ServerStatusRunning {
-		return fmt.Errorf("cannot stop server: invalid status code %d", s.status)
+	status := s.GetStatus()
+	if status != ServerStatusRunning {
+		return fmt.Errorf("cannot stop server: invalid status code %d", status)
 	}
 	s.SetStatus(ServerStatusStopping)
 	s.RequestShutdownServer()
@@ -274,10 +285,6 @@ func (s *Server) RequestShutdownServer() {
 func (s *Server) RequestRestartServer() {
 	// send signal SIGHUP
 	s.signals <- syscall.SIGHUP
-}
-
-func (s *Server) SetStatus(status ServerStatus) {
-	s.status = status
 }
 
 func (s *Server) GetService() service.IService {

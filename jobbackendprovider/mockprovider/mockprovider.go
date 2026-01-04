@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/nbigot/minijob/config"
+	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
 	"go.uber.org/zap"
 )
 
 type MockJobBackendProvider struct {
-	// implements IJobBackendProvider interface
+	// implements IJobBackendProvider & IServiceEventObserver interfaces
 	logger         *zap.Logger                   // logger is the logger
 	logVerbosity   int                           // logVerbosity is the log verbosity level
 	mu             sync.Mutex                    // mu is a mutex to protect the jobs hashmap
@@ -26,14 +27,19 @@ type MockJobBackendProvider struct {
 	wg             sync.WaitGroup                // wg is a wait group to wait for the Run function to finish
 	stopChan       chan bool                     // stopChan is a channel to stop the Run function
 	notifChan      chan jobbackendprovider.Event // notifChan is a channel to send notifications to the service
+	restoreFlag    bool                          // restoreFlag is a flag to indicate if the provider is in restore mode
 }
 
-func (p *MockJobBackendProvider) Init(notifChan chan jobbackendprovider.Event) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+func (p *MockJobBackendProvider) SetNotifChan(notifChan chan jobbackendprovider.Event) {
 	p.notifChan = notifChan
+}
+
+func (p *MockJobBackendProvider) Init() error {
 	return nil
+}
+
+func (p *MockJobBackendProvider) Shutdown() {
+	_ = p.Stop() // Ignore error during shutdown
 }
 
 func (p *MockJobBackendProvider) Stop() error {
@@ -46,6 +52,10 @@ func (p *MockJobBackendProvider) Stop() error {
 	// wait for the Run function to finish
 	p.wg.Wait()
 	return nil
+}
+
+func (p *MockJobBackendProvider) SetRestoreFlag(enabled bool) {
+	p.restoreFlag = enabled
 }
 
 func (p *MockJobBackendProvider) JobExists(jobUUID job.JobUUID) (bool, error) {
@@ -84,6 +94,22 @@ func (p *MockJobBackendProvider) OnJobCreated(j *job.Job) error {
 	return nil
 }
 
+func (p *MockJobBackendProvider) OnJobDelayed(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobDelayed, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *MockJobBackendProvider) OnJobPending(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobPending, JobUUID: j.JobUUID})
+	return nil
+}
+
 func (p *MockJobBackendProvider) OnJobEnqueued(j *job.Job) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -97,6 +123,30 @@ func (p *MockJobBackendProvider) OnJobCanceled(j *job.Job) error {
 	defer p.mu.Unlock()
 
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobCanceled, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *MockJobBackendProvider) OnJobFailed(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobFailed, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *MockJobBackendProvider) OnJobHidden(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobHidden, JobUUID: j.JobUUID})
+	return nil
+}
+
+func (p *MockJobBackendProvider) OnJobTerminated(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobTerminated, JobUUID: j.JobUUID})
 	return nil
 }
 
@@ -213,6 +263,59 @@ func (p *MockJobBackendProvider) Healthcheck() bool {
 	return true
 }
 
+func (p *MockJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {
+	if p.restoreFlag {
+		return
+	}
+
+	switch ev {
+	case event.ServiceEventJobDeletedAll:
+		_ = p.OnJobsDeleted() // Ignore error
+	}
+}
+
+func (p *MockJobBackendProvider) NotifyTopicEvent(ev event.ServiceEventType, topic string) {
+}
+
+func (p *MockJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
+	if p.restoreFlag {
+		return
+	}
+
+	switch ev {
+	case event.ServiceEventJobCreated:
+		_ = p.OnJobCreated(j)
+	case event.ServiceEventJobDelayed:
+		_ = p.OnJobDelayed(j)
+	case event.ServiceEventJobPending:
+		_ = p.OnJobPending(j)
+	case event.ServiceEventJobEnqueued:
+		_ = p.OnJobEnqueued(j)
+	case event.ServiceEventJobDeleted:
+		_ = p.OnJobDeleted(j.JobUUID)
+	case event.ServiceEventJobStarted:
+		_ = p.OnJobStarted(j)
+	case event.ServiceEventJobSucceeded:
+		_ = p.OnJobSucceeded(j)
+	case event.ServiceEventJobCanceled:
+		_ = p.OnJobCanceled(j)
+	case event.ServiceEventJobFailed:
+		_ = p.OnJobFailed(j)
+	case event.ServiceEventJobHidden:
+		_ = p.OnJobHidden(j)
+	case event.ServiceEventJobTerminated:
+		_ = p.OnJobTerminated(j)
+	}
+}
+
+func (p *MockJobBackendProvider) GetDiskUsage() int64 {
+	return 0
+}
+
+func (p *MockJobBackendProvider) GetType() string {
+	return "Mock"
+}
+
 func NewMockJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbackendprovider.IJobBackendProvider, error) {
 	return &MockJobBackendProvider{
 		logger:         logger,
@@ -221,5 +324,6 @@ func NewMockJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobback
 		writeFrequency: 10,
 		hasChanged:     false,
 		stopChan:       make(chan bool, 1),
+		restoreFlag:    false,
 	}, nil
 }

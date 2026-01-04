@@ -59,7 +59,20 @@ func WithCors() webserver.ServerOption {
 
 func WithPrometheus() webserver.ServerOption {
 	return func(s *webserver.Server) {
-		s.GetWebAPIServer().AddPrometheus(s.GetApp(), s.GetService().GetServiceEventChan())
+		if s.GetWebConfig().Metrics.Enable {
+			app := s.GetApp()
+			fp := s.GetWebAPIServer().GetFiberPrometheus()
+			fp.RegisterAt(app, "/metrics")
+			fp.SetSkipPaths([]string{
+				"/ping",
+				"/healthcheck",
+				"/livez",
+				"/readyz",
+				"/api/v1/admin/server/restart",
+				"/api/v1/admin/server/shutdown",
+			}) // Optional: Remove some paths from metrics
+			_ = app.Use(fp.Middleware)
+		}
 	}
 }
 
@@ -85,7 +98,7 @@ func RunServer(appConfig *config.Config) (bool, error) {
 	}
 	defer registry.Finalize()
 
-	svc, err := service.CreateAndInitService(appConfig)
+	svc, err := service.CreateAndInitService(appConfig, Version)
 	if err != nil {
 		return false, err
 	}

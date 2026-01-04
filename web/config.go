@@ -10,21 +10,25 @@ import (
 
 func GetFiberConfig() fiber.Config {
 	return fiber.Config{
+		AppName:                 "Minijob",
 		StrictRouting:           true,
 		CaseSensitive:           true,
 		UnescapePath:            false,
 		BodyLimit:               10485760,
 		Concurrency:             262144,
-		IdleTimeout:             60000,
+		IdleTimeout:             time.Duration(10) * time.Second,
+		ReadTimeout:             time.Duration(10) * time.Second,
+		WriteTimeout:            time.Duration(10) * time.Second,
 		ReadBufferSize:          4096,
 		WriteBufferSize:         4096,
 		CompressedFileSuffix:    ".gz",
 		GETOnly:                 false,
 		DisableKeepalive:        false,
 		DisableStartupMessage:   true,
-		ReduceMemoryUsage:       false,
+		ReduceMemoryUsage:       true,
 		EnableTrustedProxyCheck: false,
 		EnablePrintRoutes:       false,
+		ETag:                    false,
 	}
 }
 

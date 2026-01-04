@@ -7,13 +7,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/healthcheck"
 	"github.com/gofiber/fiber/v2/middleware/monitor"
+	"github.com/gofiber/fiber/v2/middleware/pprof"
 	"github.com/gofiber/swagger"
 	"github.com/qri-io/jsonschema"
 
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
 	_ "github.com/nbigot/minijob/docs"
-	"github.com/nbigot/minijob/metrics"
+	"github.com/nbigot/minijob/fiberprometheus"
 	"github.com/nbigot/minijob/service"
 )
 
@@ -24,15 +25,10 @@ type WebAPIServer struct {
 	app                *fiber.App
 	appConfig          *config.Config
 	schema             jsonschema.Schema
-	metrics            *metrics.Metrics
 }
 
-func (w *WebAPIServer) AddPrometheus(app *fiber.App, notifChan chan service.ServiceEvent) {
-	// TODO
-	// if w.appConfig.WebServer.Metrics.Enable {
-	// }
-	w.metrics = metrics.NewMetrics()
-	w.metrics.Init(app, notifChan)
+func (w *WebAPIServer) GetFiberPrometheus() *fiberprometheus.FiberPrometheus {
+	return w.service.GetMetrics().GetFiberPrometheus()
 }
 
 func (w *WebAPIServer) AddRoutes(app *fiber.App) {
@@ -54,19 +50,43 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 	apiJob.Delete("/:"+constants.JobUuidParam, w.DeleteJob)
 
 	apiJobs := api.Group("/jobs")
-	apiJobs.Get("/", w.GetAllJobs)
-	apiJobs.Get("/monitor", w.JobsMonitor)
+	apiJobs.Get("/", w.GetJobs)
+	apiJobs.Get("/all", w.GetAllJobs)
+	apiJobs.Get("/oldest", w.GetOldestJobs)
+	apiJobs.Get("/stalled", w.GetStalledJobs)
+	apiJobs.Get("/recent", w.GetRecentJobs)
+	apiJobs.Delete("/queued", w.DeleteQueuedJobs)
 	apiJobs.Delete("/", w.DeleteAllJobs)
 
+	apiTopics := api.Group("/topics")
+	apiTopics.Get("/", w.GetTopics)
+
 	apiResources := api.Group("/resources")
-	apiResources.Get("/locked", w.GetLockedResources)
+	apiResources.Get("/", w.GetLockedResources)
 	apiResources.Post("/unlock", w.UnlockAllResources)
+
+	apiResource := api.Group("/resource")
+	apiResource.Post("/:"+constants.ResourceNameQueryParam+"/unlock", w.UnlockResource)
 
 	apiAdmin := api.Group("/admin")
 	apiAdmin.Post("/server/shutdown", w.ApiServerShutdown)
 	apiAdmin.Post("/server/restart", w.ApiServerRestart)
 
-	api.Post("/computemetrics", w.ComputeMetrics)
+	apiSystem := api.Group("/system")
+	apiSystem.Get("/info", w.GetSystemInfo)
+	apiSystem.Get("/health", w.GetSystemHealth)
+	apiSystem.Get("/resources", w.GetSystemResources)
+
+	if w.appConfig.WebServer.Metrics.Enable {
+		apiObservability := api.Group("/metrics")
+		apiObservability.Get("/jobs/processing", w.GetJobsMetrics)
+		apiObservability.Get("/jobs/recent", w.GetRecentJobs)
+		apiObservability.Get("/jobs/stalled", w.GetStalledJobs)
+		apiObservability.Get("/jobs/activity", w.GetJobsCumulativeEventCount)
+		apiObservability.Get("/jobs/topics", w.GetJobsMetricsTopics)
+		apiObservability.Get("/resources", w.GetResourcesMetrics)
+		apiObservability.Get("/topics", w.GetTopicsStats)
+	}
 
 	// Add healthcheck
 	app.Get("/ping", w.Ping)
@@ -86,6 +106,7 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 	if w.appConfig.WebServer.Monitor.Enable {
 		app.Get("/monitor", monitor.New())
+		app.Use(pprof.New())
 	}
 
 	if w.appConfig.WebServer.Swagger.Enable {
@@ -105,7 +126,6 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 
 func (w *WebAPIServer) ShutdownServer() {
 	_ = w.service.Stop()
-	w.metrics.Shutdown()
 	w.funcShutdownServer()
 }
 

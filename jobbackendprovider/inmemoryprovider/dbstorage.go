@@ -51,7 +51,11 @@ func (s *DBFileStorage) Load() (job.JobMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			s.logger.Error("Error closing file", zap.Error(err))
+		}
+	}()
 
 	jsonDecoder := json.NewDecoder(file)
 	data := DBStorageFileStruct{}
@@ -63,6 +67,11 @@ func (s *DBFileStorage) Load() (job.JobMap, error) {
 			zap.String("filename", s.GetFilePath()), zap.Error(err),
 		)
 		return nil, err
+	}
+
+	// recompute states of jobs
+	for _, j := range data.Jobs {
+		j.SetStateFromHistory()
 	}
 
 	return data.Jobs, nil
@@ -99,6 +108,20 @@ func (s *DBFileStorage) Save(jobs job.JobMap) error {
 
 func (s *DBFileStorage) GetFilePath() string {
 	return filepath.Join(s.directory, s.filename)
+}
+
+func (s *DBFileStorage) GetDiskUsage() int64 {
+	fileInfo, err := os.Stat(s.GetFilePath())
+	if err != nil {
+		s.logger.Error("Can't get file info",
+			zap.String("topic", "DBFileStorage"),
+			zap.String("method", "GetDiskUsage"),
+			zap.String("filename", s.GetFilePath()),
+			zap.Error(err),
+		)
+		return 0
+	}
+	return fileInfo.Size()
 }
 
 func NewDBFileStorage(logger *zap.Logger, directory string, filename string) *DBFileStorage {

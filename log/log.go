@@ -16,7 +16,7 @@ func InitLogger(loggerConfig *zap.Config) {
 	LoggerConfig = loggerConfig
 	Logger, err = LoggerConfig.Build()
 	if err != nil {
-		fmt.Println("Error while initilize logger")
+		fmt.Println("Error while initializing logger")
 		panic(err)
 	}
 	SugarLogger = Logger.Sugar()

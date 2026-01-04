@@ -1,6 +1,9 @@
 package web
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/nbigot/minijob/constants"
+)
 
 // GetLockedResources godoc
 // @Summary Get locked Resources
@@ -9,14 +12,11 @@ import "github.com/gofiber/fiber/v2"
 // @Produce json
 // @Tags Resources
 // @success 200 {object} web.JSONResultGetLockedResources{} "successful operation"
-// @Router /api/v1/resources/locked [get]
+// @Router /api/v1/resources [get]
 func (w *WebAPIServer) GetLockedResources(c *fiber.Ctx) error {
 	c.Locals("metricName", "GetLockedResources")
 
-	lockedResources, err := w.service.GetLockedResources()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(err)
-	}
+	lockedResources := w.service.GetLockedResources()
 	return c.JSON(
 		JSONResultGetLockedResources{
 			Code:      fiber.StatusOK,
@@ -41,6 +41,40 @@ func (w *WebAPIServer) UnlockAllResources(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(err)
 	}
+	return c.JSON(
+		JSONResultSuccess{
+			Code:    fiber.StatusOK,
+			Message: "success",
+		},
+	)
+}
+
+// UnlockResource godoc
+// @Summary Unlock a single resource
+// @Description Unlock a single resource
+// @ID resource-unlock
+// @Produce json
+// @Tags Resources
+// @success 200 {object} web.JSONResultSuccess{} "successful operation"
+// @Failure 404 {object} web.JSONResult "resource not found"
+// @Router /api/v1/resource/{resourceName}/unlock [post]
+func (w *WebAPIServer) UnlockResource(c *fiber.Ctx) error {
+	c.Locals("metricName", "UnlockResource")
+	resourceName := c.Query(constants.ResourceNameQueryParam)
+	if resourceName == "" {
+		// parameter missing or empty value in query
+		return c.JSON(JSONResult{
+			Code:    fiber.StatusNotFound,
+			Message: "missing or empty resource name in query",
+			Data:    nil,
+		})
+	}
+
+	err := w.service.UnlockResource(resourceName)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(err)
+	}
+
 	return c.JSON(
 		JSONResultSuccess{
 			Code:    fiber.StatusOK,

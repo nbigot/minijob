@@ -10,6 +10,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
+	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
 	"github.com/nbigot/minijob/web/apierror"
@@ -19,7 +20,7 @@ import (
 )
 
 type RedisJobBackendProvider struct {
-	// implements IJobBackendProvider interface
+	// implements IJobBackendProvider & IServiceEventObserver interfaces
 	logger         *zap.Logger
 	logVerbosity   int
 	mu             sync.Mutex
@@ -31,14 +32,18 @@ type RedisJobBackendProvider struct {
 	stopChan       chan bool
 	notifChan      chan jobbackendprovider.Event
 	ctx            context.Context
+	restoreFlag    bool // restoreFlag is a flag to indicate if the provider is in restore mode
 }
 
-func (p *RedisJobBackendProvider) Init(notifChan chan jobbackendprovider.Event) error {
+func (p *RedisJobBackendProvider) SetNotifChan(notifChan chan jobbackendprovider.Event) {
+	p.notifChan = notifChan
+}
+
+func (p *RedisJobBackendProvider) Init() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.ctx = context.Background()
-	p.notifChan = notifChan
 
 	p.redisClient = redis.NewClient(p.redisOptions)
 
@@ -63,6 +68,10 @@ func (p *RedisJobBackendProvider) Init(notifChan chan jobbackendprovider.Event) 
 	// }
 
 	return nil
+}
+
+func (p *RedisJobBackendProvider) Shutdown() {
+	_ = p.Stop()
 }
 
 func (p *RedisJobBackendProvider) Stop() error {
@@ -90,6 +99,10 @@ func (p *RedisJobBackendProvider) Stop() error {
 	// }
 
 	return nil
+}
+
+func (p *RedisJobBackendProvider) SetRestoreFlag(enabled bool) {
+	p.restoreFlag = enabled
 }
 
 func (p *RedisJobBackendProvider) JobExists(jobUUID job.JobUUID) (bool, error) {
@@ -146,6 +159,7 @@ func (p *RedisJobBackendProvider) LoadJobs() (job.JobMap, error) {
 			}
 		}
 
+		j.SetStateFromHistory()
 		jobMap[j.JobUUID] = j
 	}
 
@@ -197,6 +211,18 @@ func (p *RedisJobBackendProvider) OnJobCanceled(j *job.Job) error {
 	return p.SaveJob(j)
 }
 
+func (p *RedisJobBackendProvider) OnJobFailed(j *job.Job) error {
+	return p.SaveJob(j)
+}
+
+func (p *RedisJobBackendProvider) OnJobHidden(j *job.Job) error {
+	return p.SaveJob(j)
+}
+
+func (p *RedisJobBackendProvider) OnJobTerminated(j *job.Job) error {
+	return p.SaveJob(j)
+}
+
 func (p *RedisJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -226,6 +252,14 @@ func (p *RedisJobBackendProvider) OnJobTimeout(j *job.Job) error {
 }
 
 func (p *RedisJobBackendProvider) OnJobCreated(j *job.Job) error {
+	return p.SaveJob(j)
+}
+
+func (p *RedisJobBackendProvider) OnJobDelayed(j *job.Job) error {
+	return p.SaveJob(j)
+}
+
+func (p *RedisJobBackendProvider) OnJobPending(j *job.Job) error {
 	return p.SaveJob(j)
 }
 
@@ -353,7 +387,9 @@ func (p *RedisJobBackendProvider) Run() error {
 
 	key := "ev:job:*"
 	pubsub := p.redisClient.Subscribe(p.ctx, "__keyspace@0__:"+key)
-	defer pubsub.Close()
+	defer func() {
+		_ = pubsub.Close()
+	}()
 
 	ch := pubsub.Channel()
 
@@ -432,6 +468,59 @@ func (p *RedisJobBackendProvider) Run() error {
 	// }
 }
 
+func (p *RedisJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {
+	if p.restoreFlag {
+		return
+	}
+
+	switch ev {
+	case event.ServiceEventJobDeletedAll:
+		_ = p.OnJobsDeleted() // Ignore error
+	}
+}
+
+func (p *RedisJobBackendProvider) NotifyTopicEvent(ev event.ServiceEventType, topic string) {
+}
+
+func (p *RedisJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
+	if p.restoreFlag {
+		return
+	}
+
+	switch ev {
+	case event.ServiceEventJobCreated:
+		_ = p.OnJobCreated(j)
+	case event.ServiceEventJobDelayed:
+		_ = p.OnJobDelayed(j)
+	case event.ServiceEventJobPending:
+		_ = p.OnJobPending(j)
+	case event.ServiceEventJobEnqueued:
+		_ = p.OnJobEnqueued(j)
+	case event.ServiceEventJobDeleted:
+		_ = p.OnJobDeleted(j.JobUUID)
+	case event.ServiceEventJobStarted:
+		_ = p.OnJobStarted(j)
+	case event.ServiceEventJobSucceeded:
+		_ = p.OnJobSucceeded(j)
+	case event.ServiceEventJobCanceled:
+		_ = p.OnJobCanceled(j)
+	case event.ServiceEventJobFailed:
+		_ = p.OnJobFailed(j)
+	case event.ServiceEventJobHidden:
+		_ = p.OnJobHidden(j)
+	case event.ServiceEventJobTerminated:
+		_ = p.OnJobTerminated(j)
+	}
+}
+
+func (p *RedisJobBackendProvider) GetDiskUsage() int64 {
+	return 0
+}
+
+func (p *RedisJobBackendProvider) GetType() string {
+	return "Redis"
+}
+
 func JobUUID2RedisKey(jobUUID job.JobUUID) string {
 	return "job:" + jobUUID.String()
 }
@@ -453,5 +542,6 @@ func NewRedisJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbac
 		finishedJobTTL: uint(max(0, conf.Backend.Redis.FinishedJobTTL)),
 		redisOptions:   options,
 		stopChan:       make(chan bool, 1),
+		restoreFlag:    false,
 	}, nil
 }

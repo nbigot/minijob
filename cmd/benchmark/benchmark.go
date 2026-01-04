@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 )
@@ -12,8 +13,15 @@ func makeHTTPRequest() {
 		fmt.Println("Error making HTTP request:", err)
 		return
 	}
-	defer resp.Body.Close()
 	// Process the response here
+	// discard the body of the response to free the connection
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		fmt.Println("Error discarding response body:", err)
+	}
+	// close the connection to the server to free the connection
+	if err := resp.Body.Close(); err != nil {
+		fmt.Println("Error closing response body:", err)
+	}
 }
 
 func createJob() {

@@ -14,6 +14,7 @@ const ErrorCantCancelJob = 1008
 const ErrorCantSetJobAsSuccessful = 1009
 const ErrorCantFailJob = 1010
 const ErrorCantEnqueueJob = 1011
+const ErrorCantGetJobs = 1012
 
 const ErrorInvalidIteratorUuid = 1020
 const ErrorInvalidParameterValue = 1021
@@ -36,6 +37,8 @@ const ErrorStreamIteratorIsBusy = 1332
 const ErrorDatabaseUnavailable = 1440
 
 const JobUuidParam = "jobuuid"
+const JobTopicParam = "topic"
 const NumJobsQueryParam = "numjobs"
 const VisibilityTimeoutQueryParam = "visibilitytimeout"
 const WaitTimeSecondsQueryParam = "waittimeseconds"
+const ResourceNameQueryParam = "resourcename"

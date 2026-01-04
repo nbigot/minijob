@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/nbigot/minijob/log"
+	"github.com/nbigot/minijob/retrypolicy"
 
 	"os"
 
@@ -61,13 +62,9 @@ type ConsulConfig struct {
 	} `yaml:"healthCheck"`
 }
 
-type WatchdogConfig struct {
-	Enable   bool `yaml:"enable"`   // Enable watchdog
-	Interval int  `yaml:"interval"` // Interval in seconds
-}
-
 type Config struct {
-	Backend struct {
+	Environment string `yaml:"environment" example:"development"` // Environment name (development, staging, production, etc.)
+	Backend     struct {
 		Type         string     `yaml:"type" example:"redis"` // Type of backend to use (redis, inMemory)
 		LoggerConfig zap.Config `yaml:"logger"`
 		LogVerbosity int        `yaml:"logVerbosity"`
@@ -85,8 +82,7 @@ type Config struct {
 			Filename                string `yaml:"filename"`
 		} `yaml:"inMemory"`
 	}
-	LoggerConfig zap.Config `yaml:"logger"`
-	Jobs         struct {
+	Jobs struct {
 		// BulkFlushFrequency        int  `yaml:"bulkFlushFrequency"`
 		// BulkMaxSize               int  `yaml:"bulkMaxSize"`
 		// ChannelBufferSize         int  `yaml:"channelBufferSize"`
@@ -98,21 +94,22 @@ type Config struct {
 			Enable bool   `yaml:"enable"` // Enable JSON schema validation
 			Path   string `yaml:"path"`   // Path to JSON schema file
 		} `yaml:"jsonSchema"`
-		DefaultVisibilityTimeout uint `json:"defaultVisibilityTimeout"` // Default duration (in seconds) to keep the job hidden from the queue after it is fetched.
-		MaxVisibilityTimeout     uint `json:"maxVisibilityTimeout"`     // Maximum duration (in seconds) to keep the job hidden from the queue after it is fetched.
+		DefaultVisibilityTimeout uint `yaml:"defaultVisibilityTimeout"` // Default duration (in seconds) to keep the job hidden from the queue after it is fetched.
+		MaxVisibilityTimeout     uint `yaml:"maxVisibilityTimeout"`     // Maximum duration (in seconds) to keep the job hidden from the queue after it is fetched.
 		RetentionPolicy          struct {
 			Enable    bool `yaml:"enable"`    // Enable retention policy
 			Interval  int  `yaml:"interval"`  // Interval in seconds to check for expired jobs
 			MaxJobAge int  `yaml:"maxJobAge"` // The duration to keep the job in the backend after it has been completed
 			MaxJobs   int  `yaml:"maxJobs"`   // The maximum number of jobs to keep in the backend after it has been completed
 		} `yaml:"retentionPolicy"`
+		RetryPolicy retrypolicy.RetryPolicy `yaml:"retryPolicy"`
 	} `yaml:"jobs"`
-	AuditLog struct {
-		Enable                 bool `yaml:"enable"`
-		EnableLogAccessGranted bool `yaml:"enableLogAccessGranted"`
-	}
+	LoggerConfig zap.Config `yaml:"logger"`
+	EventsLogger struct {
+		Enable   bool   `yaml:"enable"`
+		FilePath string `yaml:"filepath"`
+	} `yaml:"eventsLogger"`
 	WebServer WebServerConfig `yaml:"webserver"`
-	Watchdog  WatchdogConfig  `yaml:"watchdog"`
 	Consul    ConsulConfig    `yaml:"consul"`
 }
 
@@ -123,7 +120,17 @@ func LoadConfig(filename string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error while opening configuration file %s : %s", filename, err.Error())
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Logger.Error(
+				"Failed to close config file",
+				zap.String("topic", "config"),
+				zap.String("method", "LoadConfig"),
+				zap.String("filename", filename),
+				zap.Error(err),
+			)
+		}
+	}()
 
 	err = yaml.NewDecoder(file).Decode(&configuration)
 	if err != nil {
