@@ -3,8 +3,8 @@ project_name: minijob
 builds:
   -
     skip: false
-    id: {{ .ProjectName }}
-    binary: {{ .ProjectName }}
+    id: minijob
+    binary: minijob
     env: [CGO_ENABLED=0]
     goos:
       - linux
@@ -31,7 +31,7 @@ builds:
 dockers:
   -
     #skip_push: false
-    id: {{ .ProjectName }}
+    id: minijob-amd64-v2
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-amd64-v2"
@@ -55,7 +55,7 @@ dockers:
       - config-templates/docker/config/config.yaml
   -
     #skip_push: false
-    id: {{ .ProjectName }}
+    id: minijob-amd64-v3
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-amd64-v3"
@@ -79,7 +79,7 @@ dockers:
       - config-templates/docker/config/config.yaml
   -
     #skip_push: false
-    id: {{ .ProjectName }}
+    id: minijob-arm64-v8
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-arm64-v8"
@@ -102,7 +102,7 @@ dockers:
       - config-templates/docker/config/config.yaml
   -
     #skip_push: false
-    id: {{ .ProjectName }}
+    id: minijob-arm-v7
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-arm-v7"
