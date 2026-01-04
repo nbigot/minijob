@@ -31,8 +31,7 @@ builds:
 dockers:
   -
     #skip_push: false
-    ids:
-    - {{ .ProjectName }}
+    id: {{ .ProjectName }}
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-amd64-v2"
@@ -56,8 +55,7 @@ dockers:
       - config-templates/docker/config/config.yaml
   -
     #skip_push: false
-    ids:
-    - {{ .ProjectName }}
+    id: {{ .ProjectName }}
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-amd64-v3"
@@ -81,8 +79,7 @@ dockers:
       - config-templates/docker/config/config.yaml
   -
     #skip_push: false
-    ids:
-    - {{ .ProjectName }}
+    id: {{ .ProjectName }}
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-arm64-v8"
@@ -105,8 +102,7 @@ dockers:
       - config-templates/docker/config/config.yaml
   -
     #skip_push: false
-    ids:
-    - {{ .ProjectName }}
+    id: {{ .ProjectName }}
     use: buildx
     image_templates:
       - "ghcr.io/nbigot/{{ .ProjectName }}:latest-linux-arm-v7"

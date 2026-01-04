@@ -77,7 +77,7 @@ type Config struct {
 		InMemory struct {
 			MaxJobs                 uint   `yaml:"maxJobs" example:"1000"`
 			WriteFrequency          int    `yaml:"writeFrequency" example:"300"`
-			EnablePersistantStorage bool   `yaml:"enablePersistantStorage"`
+			EnablePersistentStorage bool   `yaml:"enablePersistentStorage"`
 			Directory               string `yaml:"directory"`
 			Filename                string `yaml:"filename"`
 		} `yaml:"inMemory"`

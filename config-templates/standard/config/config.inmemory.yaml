@@ -61,8 +61,8 @@ backend:
     inMemory:
         maxJobs: 100000
         writeFrequency: 30
-        enablePersistantStorage: false
-        directory: "/data/minijob"  # Directory for persistant storage
+        enablePersistentStorage: false
+        directory: "/data/minijob"  # Directory for persistent storage
         filename: "jobs.json"
 webserver:
     cors:
