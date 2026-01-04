@@ -50,7 +50,7 @@ backend:
     type: "inMemory"
     inMemory:
         maxJobs: 10000000
-        enablePersistantStorage: false
+        enablePersistentStorage: false
 webserver:
     cors:
         enable: false

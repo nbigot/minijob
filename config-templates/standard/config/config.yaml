@@ -10,7 +10,7 @@ jobs:
     maxAllowedJobs: 0 # Maximum number of jobs allowed to be created (0 means no limit)
     jsonSchema:
         enable: true  # Enable JSON schema validation for job data
-        path: "C:\\dev\\minijob\\config-templates\\standard\\config\\schema.json" # Path to JSON schema file
+        path: "./config-templates/standard/config/schema.json" # Path to JSON schema file
     retentionPolicy:
         enable: true
         interval: 60
@@ -56,14 +56,13 @@ backend:
     type: "inMemory"  # "redis" "inMemory"
     redis:
         url: "redis://localhost:6379/3?dial_timeout=3&db=1&read_timeout=6s&max_retries=2&client_name=minijob"
-        #url: "redis://user:password@localhost:6379/3?dial_timeout=3&db=1&read_timeout=6s&max_retries=2&client_name=minijob"
         maxJobs: 100000
         finishedJobTTL: 86400
     inMemory:
         maxJobs: 100000
         writeFrequency: 30
-        enablePersistantStorage: true
-        directory: "C:\\dev\\minijob\\ignore\\data\\"
+        enablePersistentStorage: true
+        directory: "/data/minijob"  # Directory for persistent storage
         filename: "jobs.json"
 webserver:
     cors:

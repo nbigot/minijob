@@ -25,7 +25,7 @@ type InMemoryJobBackendProvider struct {
 	jobs                    job.JobMap                    // hashmap of jobs
 	maxJobs                 uint                          // maxJobs is the maximum number of jobs that can be stored in the backend
 	writeFrequency          int                           // writeFrequency is the frequency in seconds to write the jobs to the storage
-	enablePersistantStorage bool                          // enablePersistantStorage is a flag to enable persistant storage
+	enablePersistentStorage bool                          // enablePersistentStorage is a flag to enable persistent storage
 	storage                 *DBFileStorage                // storage is the storage to save the jobs
 	running                 atomic.Bool                   // Add this to track if the provider is running
 	wg                      sync.WaitGroup                // wg is a wait group to wait for the Run function to finish
@@ -82,7 +82,7 @@ func (p *InMemoryJobBackendProvider) LoadJobs() (job.JobMap, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.enablePersistantStorage {
+	if p.enablePersistentStorage {
 		var err error
 		p.mapMutex.Lock()
 		p.jobs, err = p.storage.Load()
@@ -113,7 +113,7 @@ func (p *InMemoryJobBackendProvider) LoadJobs() (job.JobMap, error) {
 }
 
 func (p *InMemoryJobBackendProvider) SaveToFile() error {
-	if !p.enablePersistantStorage {
+	if !p.enablePersistentStorage {
 		return nil
 	}
 
@@ -267,7 +267,7 @@ func (p *InMemoryJobBackendProvider) sync() error {
 	}
 
 	// If persistent storage is enabled, save changes to file
-	if p.enablePersistantStorage {
+	if p.enablePersistentStorage {
 		if err := p.SaveToFile(); err != nil {
 			return err
 		}
@@ -424,7 +424,7 @@ func (p *InMemoryJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.Service
 }
 
 func (p *InMemoryJobBackendProvider) GetDiskUsage() int64 {
-	if p.enablePersistantStorage {
+	if p.enablePersistentStorage {
 		return p.storage.GetDiskUsage()
 	} else {
 		return 0
@@ -450,7 +450,7 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 		logVerbosity:            conf.Backend.LogVerbosity,
 		maxJobs:                 conf.Backend.InMemory.MaxJobs,
 		writeFrequency:          writeFrequency,
-		enablePersistantStorage: conf.Backend.InMemory.EnablePersistantStorage,
+		enablePersistentStorage: conf.Backend.InMemory.EnablePersistentStorage,
 		storage:                 NewDBFileStorage(logger, conf.Backend.InMemory.Directory, conf.Backend.InMemory.Filename),
 		hasChanged:              atomic.Bool{},
 		stopChan:                make(chan bool, 1),
