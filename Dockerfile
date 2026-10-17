@@ -12,5 +12,5 @@ WORKDIR /app
 COPY --from=build /go/bin/* ./
 COPY config-templates/docker/config /app/config
 EXPOSE 8080/tcp
-HEALTHCHECK CMD curl -f http://localhost:8080/api/v1/utils/ping || exit 1
+HEALTHCHECK CMD curl -f http://localhost:8080/livez || exit 1
 CMD ["/app/minijob", "-config", "/app/config/config.yaml"]
