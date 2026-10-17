@@ -46,7 +46,7 @@ type Service struct {
 	pqRetryJobs                pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
 	pqDelayedJobs              pq.PriorityQueue[*job.Job]             // priority queue of delayed jobs
 	mu                         sync.RWMutex                           // protects the scheduler state (see above)
-	muPullJobs                 sync.Mutex                             // to ensure safe concurrent job pulling
+	queued                     chan struct{}                          // closed (and replaced) when a job is queued: wakes the long polls
 	checkJobsRetentionRunning  atomic.Value                           // atomic value to track if the check jobs retention is running
 	checkJobsVisibilityRunning atomic.Value                           // atomic value to track if the check jobs visibility is running
 	checkJobsDelayRunning      atomic.Value                           // atomic value to track if the check delayed jobs is running
@@ -349,6 +349,7 @@ func (svc *Service) retryJobLocked(j *job.Job) error {
 
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobEnqueued)
+	svc.notifyQueuedLocked()
 
 	return nil
 }
@@ -410,8 +411,15 @@ func (svc *Service) enqueueJobLocked(j *job.Job) error {
 
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobEnqueued)
+	svc.notifyQueuedLocked()
 
 	return nil
+}
+
+// notifyQueuedLocked wakes the long polls waiting for a queued job.
+func (svc *Service) notifyQueuedLocked() {
+	close(svc.queued)
+	svc.queued = make(chan struct{})
 }
 
 func (svc *Service) GenerateNewJobUuid() (job.JobUUID, error) {
@@ -569,27 +577,34 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 		return svc.PullSpecificJob(req)
 	}
 
-	// pull any job from the queue
-
-	// prevent the case where multiple workers pull the same job
-	svc.muPullJobs.Lock()
-	defer svc.muPullJobs.Unlock()
-
-	waitTime := req.WaitTimeSeconds
+	// pull any job from the queue; with a wait time (long poll), wait until a job is
+	// queued, the wait time is over or the service stops
+	deadline := time.Now().Add(time.Duration(req.WaitTimeSeconds) * time.Second)
 	for {
-		res, found, err := svc.pullJobsOnce(req, waitTime == 0)
-		if found || waitTime == 0 {
+		last := !time.Now().Before(deadline)
+		res, found, wake, err := svc.pullJobsOnce(req, last)
+		if found || last {
 			return res, err
 		}
-		time.Sleep(1 * time.Second)
-		waitTime--
+		timer := time.NewTimer(time.Until(deadline))
+		select {
+		case <-wake:
+		case <-timer.C:
+		case <-svc.stopChan:
+			// the service stops: answer now
+			timer.Stop()
+			res, _, _, err := svc.pullJobsOnce(req, true)
+			return res, err
+		}
+		timer.Stop()
 	}
 }
 
 // pullJobsOnce starts the best job candidates, if any. The candidates are chosen and
 // started under the same lock, so a job cannot be given to two workers. found is false
-// when no job is ready; the empty poll is notified when last is true.
-func (svc *Service) pullJobsOnce(req *RequestPullJobs, last bool) (res *ResponsePullJobs, found bool, err error) {
+// when no job is ready: wake is then closed when a job is queued. The empty poll is
+// notified when last is true.
+func (svc *Service) pullJobsOnce(req *RequestPullJobs, last bool) (res *ResponsePullJobs, found bool, wake <-chan struct{}, err error) {
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
@@ -600,7 +615,7 @@ func (svc *Service) pullJobsOnce(req *RequestPullJobs, last bool) (res *Response
 			// no job candidate found in the time limit
 			svc.eventNotifier.NotifyTopicEvent(event.ServiceEventEmptyPollReceived, req.Topic)
 		}
-		return nil, false, err
+		return nil, false, svc.queued, err
 	}
 
 	res = &ResponsePullJobs{
@@ -628,7 +643,7 @@ func (svc *Service) pullJobsOnce(req *RequestPullJobs, last bool) (res *Response
 	if len(res.Jobs) == 0 {
 		svc.eventNotifier.NotifyTopicEvent(event.ServiceEventEmptyPollReceived, req.Topic)
 
-		return nil, true, &apierror.APIError{
+		return nil, true, nil, &apierror.APIError{
 			Message:  "no job found that is ready or matches the criteria",
 			Code:     constants.ErrorCantPullAnyJob,
 			HttpCode: fiber.StatusNotFound,
@@ -636,7 +651,7 @@ func (svc *Service) pullJobsOnce(req *RequestPullJobs, last bool) (res *Response
 		}
 	}
 
-	return res, true, nil
+	return res, true, nil, nil
 }
 
 func (svc *Service) findBestJobCandidatesLocked(req *RequestPullJobs) ([]*job.Job, error) {
@@ -954,6 +969,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobEnqueued)
+	svc.notifyQueuedLocked()
 
 	svc.tryEnqueuePendingJobsLocked()
 	return nil
@@ -1580,6 +1596,7 @@ func NewService(logger *zap.Logger, conf *config.Config, version string) (*Servi
 		pqRetryJobs:      *pq.NewPriorityQueue(jobEqual),
 		pqDelayedJobs:    *pq.NewPriorityQueue(jobEqual),
 		notifChanBP:      make(chan jobbackendprovider.Event, 1000),
+		queued:           make(chan struct{}),
 		stopChan:         make(chan struct{}),
 		metrics:          metrics.NewServiceMetrics(conf.WebServer.Metrics.Enable),
 		callbackService:  callback.NewCallbackService(logger),
