@@ -3,9 +3,12 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -96,4 +99,78 @@ func TestSchemaWithDefinitions(t *testing.T) {
 	assert.Equal(t, 400, status, body)
 	assert.JSONEq(t, `{"error":"invalid json content","code":1023,"jobUUID":"00000000-0000-0000-0000-000000000000",
 		"validationErrors":[{"failedField":"/topic","tag":"type should be string, got integer","value":"5"}]}`, body)
+}
+
+const templateLikeSchema = `{
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["properties"],
+	"properties": {
+		"topic": {"type": "string"},
+		"priority": {"type": "integer"},
+		"properties": {"type": "object"},
+		"lockResources": {"type": "array", "items": {"type": "string"}},
+		"delay": {"type": "integer"}
+	}
+}`
+
+func TestSchemaErrorsInPathOrder(t *testing.T) {
+	app := schemaServer(t, templateLikeSchema)
+	body := `{"topic":["a"],"priority":1.5,"properties":[1,2],"lockResources":[1,"a",{}],"delay":"x"}`
+	expected := `{"error":"invalid json content","code":1023,"jobUUID":"00000000-0000-0000-0000-000000000000","validationErrors":[` +
+		`{"failedField":"/delay","tag":"type should be integer, got string","value":"x"},` +
+		`{"failedField":"/lockResources/0","tag":"type should be string, got integer","value":"1"},` +
+		`{"failedField":"/lockResources/2","tag":"type should be string, got object","value":"map[]"},` +
+		`{"failedField":"/priority","tag":"type should be integer, got number","value":"1.5"},` +
+		`{"failedField":"/properties","tag":"type should be object, got array","value":"[1 2]"},` +
+		`{"failedField":"/topic","tag":"type should be string, got array","value":"[a]"}]}`
+	for i := 0; i < 20; i++ {
+		status, got := send(t, app, "POST", "/api/v1/job/", "application/json", body)
+		require.Equal(t, 400, status)
+		require.Equal(t, expected, got, "attempt %d", i)
+	}
+}
+
+func TestSchemaValidationUnderConcurrency(t *testing.T) {
+	// One schema is shared by all requests (run with -race).
+	app := schemaServer(t, `{
+		"type": "object",
+		"required": ["properties"],
+		"properties": {"properties": {"$ref": "#/definitions/props"}, "topic": {"$ref": "#/definitions/name"}},
+		"definitions": {"props": {"type": "object"}, "name": {"type": "string"}}
+	}`)
+	var wg sync.WaitGroup
+	errs := make(chan string, 64)
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{"topic":5,"properties":{}}`)
+				if status != 400 || !strings.Contains(body, `"tag":"type should be string, got integer"`) {
+					errs <- body
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Error(e)
+	}
+}
+
+func TestSchemaRemoteRefIsNotDownloaded(t *testing.T) {
+	var fetched atomic.Int64
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetched.Add(1)
+		_, _ = w.Write([]byte(`{"type":"string"}`))
+	}))
+	defer remote.Close()
+	app := schemaServer(t, `{"type":"object","properties":{"topic":{"$ref":"`+remote.URL+`/name.json"}}}`)
+	status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{"topic":"t","properties":{}}`)
+	assert.Equal(t, 400, status, body)
+	assert.Contains(t, body, `"tag":"failed to resolve schema for ref `+remote.URL+`/name.json"`)
+	assert.Equal(t, int64(0), fetched.Load(), "the schema must not be downloaded while answering a request")
 }
