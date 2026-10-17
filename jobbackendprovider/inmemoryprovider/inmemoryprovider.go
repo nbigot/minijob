@@ -213,6 +213,17 @@ func (p *InMemoryJobBackendProvider) OnJobTimeout(j *job.Job) error {
 	return nil
 }
 
+// OnJobUpdated saves a change of the job that has no event of its own (visibility timeout).
+func (p *InMemoryJobBackendProvider) OnJobUpdated(j *job.Job) error {
+	p.mapMutex.Lock()
+	if _, known := p.jobs[j.JobUUID]; known {
+		p.jobs[j.JobUUID] = j.Snapshot()
+	}
+	p.mapMutex.Unlock()
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobUpdated, JobUUID: j.JobUUID})
+	return nil
+}
+
 // WaitWrites returns at once: the jobs are saved periodically.
 func (p *InMemoryJobBackendProvider) WaitWrites() {}
 

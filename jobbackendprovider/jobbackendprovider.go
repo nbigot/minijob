@@ -41,6 +41,8 @@ const (
 	EventResourceUnlocked
 	// EventFatalError is an event that is sent when a fatal error occurs
 	EventFatalError
+	// EventJobUpdated is an event that is sent when a job changes without an event of its own
+	EventJobUpdated
 )
 
 type Event struct {
@@ -70,6 +72,8 @@ type IJobBackendProvider interface {
 	OnJobsDeleted() error
 	OnAllResourcesUnlocked() error
 	OnResourceUnlocked(j *job.Job, resource string) error
+	// OnJobUpdated saves a change of the job that has no event of its own (visibility timeout)
+	OnJobUpdated(j *job.Job) error
 	// WaitWrites returns once the changes made before the call were written (or failed once)
 	WaitWrites()
 	NotifyEvent(ev event.ServiceEventType)

@@ -1195,6 +1195,16 @@ func (svc *Service) ChangeVisibilityTimeoutJob(jobUUID job.JobUUID, visibilityTi
 	}
 
 	j.VisibilityTimeout = visibilityTimeout
+	// no event for this change: the backend saves it directly
+	if err := svc.bp.OnJobUpdated(j); err != nil {
+		svc.logger.Error(
+			"Cannot save job visibility timeout",
+			zap.String("topic", "service"),
+			zap.String("method", "ChangeVisibilityTimeoutJob"),
+			zap.String("JobUUID", jobUUID.String()),
+			zap.Error(err),
+		)
+	}
 
 	return nil
 }

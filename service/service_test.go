@@ -426,6 +426,25 @@ func TestBackendMaxJobsIsEnforced(t *testing.T) {
 	assert.Equal(t, uint(3), svc.GetJobsCount(), "no job is added beyond the limit")
 }
 
+func TestVisibilityTimeoutChangeIsSaved(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := CreateAndInitService(persistentConfig(t, dir), "test")
+	require.NoError(t, err)
+	go func() { _ = svc.Run() }()
+	id := createJob(t, svc, `{"properties":{}}`)
+	pullOne(t, svc, id)
+	require.NoError(t, svc.ChangeVisibilityTimeoutJob(id, 300))
+	require.NoError(t, svc.Stop()) // final save
+
+	data, err := os.ReadFile(filepath.Join(dir, "jobs.json"))
+	require.NoError(t, err)
+	var file struct {
+		Jobs map[string]job.Job `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(data, &file))
+	assert.Equal(t, uint(300), file.Jobs[id.String()].VisibilityTimeout)
+}
+
 func TestRedisBackendKeepsTheJobs(t *testing.T) {
 	m := miniredis.RunT(t)
 	redisBackend := "    type: \"redis\"\n    redis:\n        url: \"redis://" + m.Addr() + "/0\"\n" +
