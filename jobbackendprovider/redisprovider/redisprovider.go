@@ -373,7 +373,11 @@ func (p *RedisJobBackendProvider) NotifyChange(event jobbackendprovider.Event) {
 		)
 	}
 
-	p.notifChan <- event
+	// informational only: never block the caller (the service holds its lock)
+	select {
+	case p.notifChan <- event:
+	default:
+	}
 }
 
 func (p *RedisJobBackendProvider) Run() error {

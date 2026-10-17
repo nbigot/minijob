@@ -30,33 +30,39 @@ import (
 	"go.uber.org/zap"
 )
 
+// Service is the job scheduler.
+//
+// Locking: mu protects the whole scheduler state (jobs, pending jobs, retry and delayed
+// queues, resource locks) and every job it holds; job state changes and the notification of
+// the observers (backend provider, metrics, event log, callbacks) happen with mu held, so
+// they are seen in the same order by everyone. Methods whose name ends with "Locked" expect
+// mu to be held. Jobs returned to callers are snapshots (Job.Snapshot), which later changes
+// do not affect.
 type Service struct {
 	// implements IService interface
-	version                     string                                 // service version
-	jobs                        job.JobMap                             // hashmap of jobs
-	pendingJobs                 job.JobMap                             // hashmap of pending jobs
-	pqRetryJobs                 pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
-	pqDelayedJobs               pq.PriorityQueue[*job.Job]             // priority queue of delayed jobs
-	mu                          sync.Mutex                             // to ensure safe concurrent manipulation of jobs
-	muPullJobs                  sync.Mutex                             // to ensure safe concurrent job pulling
-	mapMutex                    sync.RWMutex                           // mutex to protect hashmap of jobs
-	checkJobsRetentionRunning   atomic.Value                           // atomic value to track if the check jobs retention is running
-	checkJobsVisibilityRunning  atomic.Value                           // atomic value to track if the check jobs visibility is running
-	checkJobsDelayRunning       atomic.Value                           // atomic value to track if the check delayed jobs is running
-	notifChanBP                 chan jobbackendprovider.Event          // notification channel for job backend provider
-	notifyTryEnqueuePendingJobs chan struct{}                          // channel to notify the TryEnqueuePendingJobs function
-	metrics                     metrics.IServiceMetrics                // service to manage metrics
-	eventLogger                 *eventlogger.EventLoggerObserver       // event logger
-	eventNotifier               event.IServiceEventNotifier            // service to manage events
-	wg                          sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
-	stopChan                    chan struct{}                          // stopChan is a channel to stop the Run function
-	running                     atomic.Bool                            // Add this to track if the service is running
-	startTime                   time.Time                              // service start time
-	bp                          jobbackendprovider.IJobBackendProvider // backend provider
-	conf                        *config.Config                         // configuration
-	logger                      *zap.Logger                            // logger
-	resourcesManager            *ResourcesManager                      // resources manager
-	callbackService             *callback.CallbackService              // callback service for job completion notifications
+	version                    string                                 // service version
+	jobs                       job.JobMap                             // hashmap of jobs
+	pendingJobs                job.JobMap                             // hashmap of pending jobs
+	pqRetryJobs                pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
+	pqDelayedJobs              pq.PriorityQueue[*job.Job]             // priority queue of delayed jobs
+	mu                         sync.RWMutex                           // protects the scheduler state (see above)
+	muPullJobs                 sync.Mutex                             // to ensure safe concurrent job pulling
+	checkJobsRetentionRunning  atomic.Value                           // atomic value to track if the check jobs retention is running
+	checkJobsVisibilityRunning atomic.Value                           // atomic value to track if the check jobs visibility is running
+	checkJobsDelayRunning      atomic.Value                           // atomic value to track if the check delayed jobs is running
+	notifChanBP                chan jobbackendprovider.Event          // notification channel for job backend provider
+	metrics                    metrics.IServiceMetrics                // service to manage metrics
+	eventLogger                *eventlogger.EventLoggerObserver       // event logger
+	eventNotifier              event.IServiceEventNotifier            // service to manage events
+	wg                         sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
+	stopChan                   chan struct{}                          // stopChan is a channel to stop the Run function
+	running                    atomic.Bool                            // Add this to track if the service is running
+	startTime                  time.Time                              // service start time
+	bp                         jobbackendprovider.IJobBackendProvider // backend provider
+	conf                       *config.Config                         // configuration
+	logger                     *zap.Logger                            // logger
+	resourcesManager           *ResourcesManager                      // resources manager
+	callbackService            *callback.CallbackService              // callback service for job completion notifications
 }
 
 func (svc *Service) Init() error {
@@ -112,8 +118,8 @@ func (svc *Service) GetHostname() string {
 }
 
 func (svc *Service) GetJobsCount() uint {
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 	return uint(len(svc.jobs))
 }
 
@@ -122,8 +128,8 @@ func (svc *Service) UpdateResourcesLockedCountMetric(topic string, inc int) {
 }
 
 func (svc *Service) LoadJobs() error {
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	var err error
 	svc.jobs, err = svc.bp.LoadJobs()
@@ -160,14 +166,15 @@ func (svc *Service) LoadJobs() error {
 }
 
 func (svc *Service) CreateJob(payload []byte) (*job.Job, error) {
+	// decode the request before taking the lock
+	j, decodeErr := job.NewJobFromRequest(payload)
+
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
-	var err error
-
 	// check if a job can be created
-	if svc.conf.Jobs.MaxAllowedJobs > 0 && uint(svc.GetJobsCount()) >= svc.conf.Jobs.MaxAllowedJobs {
-		err = errors.New("cannot create job, limit reached")
+	if svc.conf.Jobs.MaxAllowedJobs > 0 && uint(len(svc.jobs)) >= svc.conf.Jobs.MaxAllowedJobs {
+		err := errors.New("cannot create job, limit reached")
 		svc.logger.Error(
 			"Cannot create job",
 			zap.String("topic", "service"),
@@ -182,24 +189,24 @@ func (svc *Service) CreateJob(payload []byte) (*job.Job, error) {
 		}
 	}
 
-	var j *job.Job
-	j, err = job.NewJobFromRequest(payload)
-	if err != nil {
+	if decodeErr != nil {
 		svc.logger.Error(
 			"Cannot create job",
 			zap.String("topic", "service"),
 			zap.String("method", "CreateJob"),
-			zap.Error(err),
+			zap.Error(decodeErr),
 		)
-		return nil, err
+		return nil, decodeErr
 	}
 
-	return svc.FinalizeJobCreation(j)
+	return svc.finalizeJobCreationLocked(j)
 }
 
-func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
+// finalizeJobCreationLocked adds a new job and schedules it. It returns the job as it was
+// created (pending or delayed), before it is queued.
+func (svc *Service) finalizeJobCreationLocked(j *job.Job) (*job.Job, error) {
 	now := time.Now().UnixMilli()
-	newJobUuid, err := svc.GenerateNewJobUuid()
+	newJobUuid, err := svc.generateNewJobUuidLocked()
 	if err != nil {
 		svc.logger.Error(
 			"Cannot create job",
@@ -211,9 +218,7 @@ func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
 	}
 	j.Init(newJobUuid, now)
 
-	svc.mapMutex.Lock()
 	svc.jobs[j.JobUUID] = j
-	svc.mapMutex.Unlock()
 
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
@@ -237,15 +242,17 @@ func (svc *Service) FinalizeJobCreation(j *job.Job) (*job.Job, error) {
 
 	now = time.Now().UnixMilli()
 	if j.StartAfter != 0 && j.StartAfter > now {
-		svc.SetJobStateToDelayed(j)
+		svc.setJobStateToDelayedLocked(j)
 	} else {
-		svc.SetJobStateToPending(j)
+		svc.setJobStateToPendingLocked(j)
 	}
 
-	return j, nil
+	created := j.Snapshot()
+	svc.tryEnqueuePendingJobsLocked()
+	return created, nil
 }
 
-func (svc *Service) SetJobStateToDelayed(j *job.Job) {
+func (svc *Service) setJobStateToDelayedLocked(j *job.Job) {
 	// delay the job by adding a history event
 	j.AddHistoryEvent(job.JobEventDelay, time.Now().UnixMilli())
 	// the job is delayed
@@ -254,21 +261,24 @@ func (svc *Service) SetJobStateToDelayed(j *job.Job) {
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobDelayed)
 }
 
-func (svc *Service) SetJobStateToPending(j *job.Job) {
+func (svc *Service) setJobStateToPendingLocked(j *job.Job) {
 	// add a history event
 	j.AddHistoryEvent(job.JobEventPending, time.Now().UnixMilli())
-	// the job is pending
+	// the job is pending (the caller tries to enqueue the pending jobs)
 	svc.pendingJobs[j.JobUUID] = j
-	svc.notifyTryEnqueuePendingJobs <- struct{}{}
 	// send a notification that the job is pending
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobPending)
 }
 
 func (svc *Service) TryEnqueuePendingJobs() {
-	// This function check if a pending job can be enqueued
-	// if a job is pending and the resources are available the job is enqueued
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
+	svc.tryEnqueuePendingJobsLocked()
+}
+
+func (svc *Service) tryEnqueuePendingJobsLocked() {
+	// This function check if a pending job can be enqueued
+	// if a job is pending and the resources are available the job is enqueued
 
 	// optimization: if there are no pending jobs, return
 	cptPendingJobs := len(svc.pendingJobs)
@@ -277,10 +287,10 @@ func (svc *Service) TryEnqueuePendingJobs() {
 	}
 
 	// create a list of pending jobs from variable svc.pendingJobs for sorting
-	lockedResourcesCopy := svc.resourcesManager.GetLockedResources()
+	lockedResources := svc.resourcesManager.GetLockedResources()
 	pendingJobs := make([]*job.Job, 0, len(svc.pendingJobs))
 	for _, j := range svc.pendingJobs {
-		if !requiresLockedResources(lockedResourcesCopy, j) { // BUG: fatal error: concurrent map read and map write
+		if !requiresLockedResources(lockedResources, j) {
 			pendingJobs = append(pendingJobs, j)
 		}
 	}
@@ -290,7 +300,7 @@ func (svc *Service) TryEnqueuePendingJobs() {
 
 	// try to enqueue the pending jobs (may fail if resources are not available)
 	for _, j := range pendingJobs {
-		_ = svc.EnqueueJob(j)
+		_ = svc.enqueueJobLocked(j)
 	}
 }
 
@@ -311,7 +321,7 @@ func (svc *Service) AttemptJobRetries() {
 		if !ok {
 			break
 		}
-		if err := svc.RetryJob(j); err != nil {
+		if err := svc.retryJobLocked(j); err != nil {
 			// the job cannot be retried
 			// so enqueue it back in the priority queue
 			svc.pqRetryJobs.Enqueue(j, priority)
@@ -321,7 +331,7 @@ func (svc *Service) AttemptJobRetries() {
 	}
 }
 
-func (svc *Service) RetryJob(j *job.Job) error {
+func (svc *Service) retryJobLocked(j *job.Job) error {
 	// Retry the job immediately
 	now := time.Now().UnixMilli()
 
@@ -343,7 +353,7 @@ func (svc *Service) RetryJob(j *job.Job) error {
 	return nil
 }
 
-func (svc *Service) lockResources(j *job.Job) *apierror.APIError {
+func (svc *Service) lockResourcesLocked(j *job.Job) *apierror.APIError {
 	// Lock the resources required by the job
 	if err := svc.resourcesManager.LockResources(j); err != nil {
 		// the job is not ready to be enqueued
@@ -362,7 +372,7 @@ func (svc *Service) lockResources(j *job.Job) *apierror.APIError {
 	return nil
 }
 
-func (svc *Service) EnqueueJob(j *job.Job) error {
+func (svc *Service) enqueueJobLocked(j *job.Job) error {
 	// Attempt to enqueue the job.
 	// If it fails, it means that the job is not ready to be enqueued due to resource unavailability.
 
@@ -379,7 +389,7 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 	}
 
 	// Lock the resources
-	if apiError := svc.lockResources(j); apiError != nil {
+	if apiError := svc.lockResourcesLocked(j); apiError != nil {
 		return apiError
 	}
 
@@ -405,10 +415,13 @@ func (svc *Service) EnqueueJob(j *job.Job) error {
 }
 
 func (svc *Service) GenerateNewJobUuid() (job.JobUUID, error) {
-	// ensure new job uuid is unique
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	return svc.generateNewJobUuidLocked()
+}
 
+func (svc *Service) generateNewJobUuidLocked() (job.JobUUID, error) {
+	// ensure new job uuid is unique
 	for {
 		uuidCandidate, err := uuid.NewV7()
 		if err != nil {
@@ -426,33 +439,33 @@ func (svc *Service) GenerateNewJobUuid() (job.JobUUID, error) {
 }
 
 func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
-	var err error
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	return svc.deleteJobLocked(jobUUID)
+}
 
-	j, err := svc.GetJob(jobUUID)
+func (svc *Service) deleteJobLocked(jobUUID job.JobUUID) error {
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantDeleteJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot delete job",
 			zap.String("topic", "service"),
 			zap.String("method", "DeleteJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 		return &apiErr
 	}
 
-	svc.UnlockJobResources(j)
+	svc.unlockJobResourcesLocked(j)
 
 	// delete the job (add a history event)
 	j.AddHistoryEvent(job.JobEventDelete, time.Now().UnixMilli())
-
-	svc.mapMutex.Lock()
 
 	// Remove the job from the retry queue (if it is in the retry queue)
 	_ = svc.pqRetryJobs.Remove(j) // Ignore error - job might not be in the queue
@@ -466,8 +479,6 @@ func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
 	// Remove the job from the pending jobs (if it is in the pending jobs)
 	delete(svc.pendingJobs, jobUUID)
 
-	svc.mapMutex.Unlock()
-
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
 			"Job deleted",
@@ -480,37 +491,39 @@ func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobDeleted)
 
+	// the resources of the job may let pending jobs start
+	svc.tryEnqueuePendingJobsLocked()
 	return nil
 }
 
 func (svc *Service) DeleteAllJobs() error {
-	svc.mapMutex.Lock()
-	defer svc.mapMutex.Unlock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	svc.pqRetryJobs.Clear()
 	svc.pqDelayedJobs.Clear()
 	svc.jobs = make(job.JobMap)
 	svc.pendingJobs = make(job.JobMap)
-	_ = svc.UnlockAllResources() // Ignore error during deletion
+	_ = svc.unlockAllResourcesLocked() // Ignore error during deletion
 	svc.eventNotifier.NotifyEvent(event.ServiceEventJobDeletedAll)
 	return nil
 }
 
 func (svc *Service) DeleteQueuedJobs() error {
-	// First, collect the job UUIDs to delete while holding the lock
-	svc.mapMutex.RLock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
+	// collect the job UUIDs to delete (in id order)
 	jobUUIDsToDelete := make([]job.JobUUID, 0)
-	for jobUUID, j := range svc.jobs {
-		jobState := j.GetState()
+	for _, jobUUID := range sortedJobIDs(svc.jobs) {
+		jobState := svc.jobs[jobUUID].GetState()
 		if jobState == job.JobCreated || jobState == job.JobDelayed || jobState == job.JobPending || jobState == job.JobQueued {
 			jobUUIDsToDelete = append(jobUUIDsToDelete, jobUUID)
 		}
 	}
-	svc.mapMutex.RUnlock()
 
-	// Now, delete jobs outside the lock to avoid deadlock and iteration issues
 	for _, jobUUID := range jobUUIDsToDelete {
-		if err := svc.DeleteJob(jobUUID); err != nil {
+		if err := svc.deleteJobLocked(jobUUID); err != nil {
 			svc.logger.Error(
 				"Cannot delete queued job",
 				zap.String("topic", "service"),
@@ -525,7 +538,7 @@ func (svc *Service) DeleteQueuedJobs() error {
 	return nil
 }
 
-func (svc *Service) UnlockJobResources(j *job.Job) {
+func (svc *Service) unlockJobResourcesLocked(j *job.Job) {
 	cptJobLockResources := len(j.LockResources)
 	if cptJobLockResources == 0 {
 		return
@@ -562,39 +575,41 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 	svc.muPullJobs.Lock()
 	defer svc.muPullJobs.Unlock()
 
-	// try to find the best job candidates
-	var candidates []*job.Job
-	var err error
-
 	waitTime := req.WaitTimeSeconds
 	for {
-		// note: when no candidate is found, err is not nil
-		candidates, err = svc.FindBestJobCandidates(req)
-		if len(candidates) > 0 {
-			// at least one job candidate is ready to start
-			break
-		}
-		if waitTime == 0 {
-			// no job candidate found in the time limit
-			svc.eventNotifier.NotifyTopicEvent(event.ServiceEventEmptyPollReceived, req.Topic)
-			return nil, err
+		res, found, err := svc.pullJobsOnce(req, waitTime == 0)
+		if found || waitTime == 0 {
+			return res, err
 		}
 		time.Sleep(1 * time.Second)
 		waitTime--
 	}
+}
 
-	res := &ResponsePullJobs{
+// pullJobsOnce starts the best job candidates, if any. The candidates are chosen and
+// started under the same lock, so a job cannot be given to two workers. found is false
+// when no job is ready; the empty poll is notified when last is true.
+func (svc *Service) pullJobsOnce(req *RequestPullJobs, last bool) (res *ResponsePullJobs, found bool, err error) {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
+	// note: when no candidate is found, err is not nil
+	candidates, err := svc.findBestJobCandidatesLocked(req)
+	if len(candidates) == 0 {
+		if last {
+			// no job candidate found in the time limit
+			svc.eventNotifier.NotifyTopicEvent(event.ServiceEventEmptyPollReceived, req.Topic)
+		}
+		return nil, false, err
+	}
+
+	res = &ResponsePullJobs{
 		Jobs: make([]*job.Job, 0),
 	}
 
 	// try to start the jobs from the candidates
-	// note: at this point at least one job candidate should be able to start
 	for _, j := range candidates {
-		if err := svc.StartJob(j.JobUUID, req); err != nil {
-			// rare but might happen if a previous job from candidates has locked resources,
-			// or when multiple workers attempt to start a job,
-			// but the server assigns the same job to all of them
-
+		if err := svc.startJobLocked(j.JobUUID, req); err != nil {
 			// log the warning
 			svc.logger.Warn(
 				"Cannot start job",
@@ -607,13 +622,13 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 			// in this case, we skip the job (best effort)
 			continue
 		}
-		res.Jobs = append(res.Jobs, j)
+		res.Jobs = append(res.Jobs, j.Snapshot())
 	}
 
 	if len(res.Jobs) == 0 {
 		svc.eventNotifier.NotifyTopicEvent(event.ServiceEventEmptyPollReceived, req.Topic)
 
-		return nil, &apierror.APIError{
+		return nil, true, &apierror.APIError{
 			Message:  "no job found that is ready or matches the criteria",
 			Code:     constants.ErrorCantPullAnyJob,
 			HttpCode: fiber.StatusNotFound,
@@ -621,14 +636,11 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 		}
 	}
 
-	return res, nil
+	return res, true, nil
 }
 
-func (svc *Service) FindBestJobCandidates(req *RequestPullJobs) ([]*job.Job, error) {
+func (svc *Service) findBestJobCandidatesLocked(req *RequestPullJobs) ([]*job.Job, error) {
 	// find the best job candidates to start
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
-
 	if len(svc.jobs) == 0 {
 		// job not found in the queue
 		return nil, &apierror.APIError{
@@ -690,18 +702,18 @@ func (svc *Service) PullSpecificJob(req *RequestPullJobs) (*ResponsePullJobs, er
 
 	jobUUID := *req.JobUUID
 
-	svc.mapMutex.RLock()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
 	if j, found := svc.jobs[jobUUID]; found {
-		svc.mapMutex.RUnlock()
-		if err := svc.StartJob(jobUUID, req); err != nil {
+		if err := svc.startJobLocked(jobUUID, req); err != nil {
 			return nil, err
 		}
 
 		return &ResponsePullJobs{
-			Jobs: []*job.Job{j},
+			Jobs: []*job.Job{j.Snapshot()},
 		}, nil
 	}
-	svc.mapMutex.RUnlock()
 
 	// job not found in the queue
 	return nil, &apierror.APIError{
@@ -715,25 +727,24 @@ func (svc *Service) PullSpecificJob(req *RequestPullJobs) (*ResponsePullJobs, er
 func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
+	return svc.startJobLocked(jobUUID, req)
+}
 
-	var err error
-
+func (svc *Service) startJobLocked(jobUUID job.JobUUID, req *RequestPullJobs) error {
 	// get the job
-	j, err := svc.GetJob(jobUUID)
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantStartJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot start job",
 			zap.String("topic", "service"),
 			zap.String("method", "StartJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
@@ -742,21 +753,18 @@ func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 	// check if the job is able to be started (from its state)
 	if j.GetState() != job.JobQueued {
 		// This occurs when the job is already started,
-		// for instance, when multiple workers attempt to start a job,
-		// but the server assigns the same job to all of them.
+		// for instance, when multiple workers attempt to start a job.
 		apiErr := apierror.APIError{
 			Message:  "job already started",
 			Code:     constants.ErrorCantStartJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot start job",
 			zap.String("topic", "service"),
 			zap.String("method", "StartJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
@@ -786,52 +794,50 @@ func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
 }
 
 func (svc *Service) CloneJob(jobUUID job.JobUUID) (*job.Job, error) {
-	var err error
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// get the job
-	j, err := svc.GetJob(jobUUID)
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantCloneJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot clone job",
 			zap.String("topic", "service"),
 			zap.String("method", "CloneJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return nil, &apiErr
 	}
 
 	clone := j.Clone()
-	return svc.FinalizeJobCreation(clone)
+	return svc.finalizeJobCreationLocked(clone)
 }
 
 func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
-	var err error
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// get the job
-	j, err := svc.GetJob(jobUUID)
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantSetJobAsSuccessful,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot set job as successful",
 			zap.String("topic", "service"),
 			zap.String("method", "SetJobAsSuccessful"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
@@ -844,21 +850,19 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 			Code:     constants.ErrorCantSetJobAsSuccessful,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot set job as successful",
 			zap.String("topic", "service"),
 			zap.String("method", "SetJobAsSuccessful"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
 	}
 
 	// unlock the resources
-	svc.UnlockJobResources(j)
+	svc.unlockJobResourcesLocked(j)
 
 	// finish the job (add a history event)
 	j.AddHistoryEvent(job.JobEventSuccess, time.Now().UnixMilli())
@@ -875,30 +879,29 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobSucceeded)
 
-	svc.notifyTryEnqueuePendingJobs <- struct{}{}
+	svc.tryEnqueuePendingJobsLocked()
 	return nil
 }
 
 func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	// cancel a job that is running and put it back in the queue
-	var err error
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// get the job
-	j, err := svc.GetJob(jobUUID)
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantCancelJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot cancel job",
 			zap.String("topic", "service"),
 			zap.String("method", "CancelJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
@@ -911,14 +914,12 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 			Code:     constants.ErrorCantCancelJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot cancel job",
 			zap.String("topic", "service"),
 			zap.String("method", "CancelJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
@@ -954,29 +955,33 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobEnqueued)
 
-	svc.notifyTryEnqueuePendingJobs <- struct{}{}
+	svc.tryEnqueuePendingJobsLocked()
 	return nil
 }
 
 func (svc *Service) FailJob(jobUUID job.JobUUID) (reachedMaxRetry bool, err error) {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	return svc.failJobLocked(jobUUID)
+}
+
+func (svc *Service) failJobLocked(jobUUID job.JobUUID) (reachedMaxRetry bool, err error) {
 	// Mark a running job as failed
 
 	// get the job
-	j, err := svc.GetJob(jobUUID)
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantFailJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot set job as failed",
 			zap.String("topic", "service"),
 			zap.String("method", "FailJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return false, &apiErr
@@ -989,14 +994,12 @@ func (svc *Service) FailJob(jobUUID job.JobUUID) (reachedMaxRetry bool, err erro
 			Code:     constants.ErrorCantFailJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot set job as failed",
 			zap.String("topic", "service"),
 			zap.String("method", "FailJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return false, &apiErr
@@ -1019,7 +1022,7 @@ func (svc *Service) FailJob(jobUUID job.JobUUID) (reachedMaxRetry bool, err erro
 
 	// if the job has failed too many times, set it as terminated
 	if j.GetCountFaillures() >= svc.conf.Jobs.RetryPolicy.MaxRetry {
-		return svc.OnJobFailedTooManyTimes(j)
+		return svc.onJobFailedTooManyTimesLocked(j)
 	}
 
 	// The job has not yet failed too many times
@@ -1028,22 +1031,22 @@ func (svc *Service) FailJob(jobUUID job.JobUUID) (reachedMaxRetry bool, err erro
 	// Check if the minimum duration between each retry is 0
 	if delay == 0 {
 		// Retry the job immediately
-		return false, svc.RetryJob(j)
+		return false, svc.retryJobLocked(j)
 	}
 
 	// compute the next retry time (current time + duration between retry)
 	now := time.Now().UnixMilli()
 	nextRetryTime := now + delay.Milliseconds()
-	return false, svc.RetryJobLater(j, nextRetryTime)
+	return false, svc.retryJobLaterLocked(j, nextRetryTime)
 }
 
-func (svc *Service) OnJobFailedTooManyTimes(j *job.Job) (reachedMaxRetry bool, err error) {
+func (svc *Service) onJobFailedTooManyTimesLocked(j *job.Job) (reachedMaxRetry bool, err error) {
 	// the job has failed too many times, set it as terminated
 	now := time.Now().UnixMilli()
 	j.AddHistoryEvent(job.JobEventTerminate, now)
 
 	// unlock the resources
-	svc.UnlockJobResources(j)
+	svc.unlockJobResourcesLocked(j)
 
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
@@ -1058,11 +1061,11 @@ func (svc *Service) OnJobFailedTooManyTimes(j *job.Job) (reachedMaxRetry bool, e
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobTerminated)
 
-	svc.notifyTryEnqueuePendingJobs <- struct{}{}
+	svc.tryEnqueuePendingJobsLocked()
 	return true, nil
 }
 
-func (svc *Service) RetryJobLater(j *job.Job, nextRetryTime int64) error {
+func (svc *Service) retryJobLaterLocked(j *job.Job, nextRetryTime int64) error {
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
 			"Job added to the retry queue",
@@ -1073,14 +1076,12 @@ func (svc *Service) RetryJobLater(j *job.Job, nextRetryTime int64) error {
 		)
 	}
 
-	// TODO: il faut unlock les resources car si le delay > 10 alors tous les autres jobs ayant besoin de ces resources seront bloqués pendant 10 secondes
 	// set job state to JobHidden
-	//j.SetState(job.JobHidden)
 	now := time.Now().UnixMilli()
 	j.AddHistoryEvent(job.JobEventHide, now)
 
 	// unlock the resources
-	svc.UnlockJobResources(j)
+	svc.unlockJobResourcesLocked(j)
 
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobHidden)
@@ -1091,26 +1092,29 @@ func (svc *Service) RetryJobLater(j *job.Job, nextRetryTime int64) error {
 	// that's why we use a negative value for the next retry time
 	svc.pqRetryJobs.Enqueue(j, -nextRetryTime)
 
+	// the released resources may let pending jobs start
+	svc.tryEnqueuePendingJobsLocked()
 	return nil
 }
 
 func (svc *Service) ChangeVisibilityTimeoutJob(jobUUID job.JobUUID, visibilityTimeout uint) error {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
 	// get the job
-	j, err := svc.GetJob(jobUUID)
+	j := svc.jobs[jobUUID]
 	if j == nil {
 		apiErr := apierror.APIError{
 			Message:  "job not found",
 			Code:     constants.ErrorCantCloneJob,
 			HttpCode: fiber.StatusBadRequest,
 			JobUUID:  jobUUID,
-			Err:      err,
 		}
 		svc.logger.Error(
 			"Cannot change job visibility timeout",
 			zap.String("topic", "service"),
 			zap.String("method", "ChangeVisibilityTimeoutJob"),
 			zap.String("JobUUID", jobUUID.String()),
-			zap.Error(err),
 		)
 
 		return &apiErr
@@ -1121,26 +1125,26 @@ func (svc *Service) ChangeVisibilityTimeoutJob(jobUUID job.JobUUID, visibilityTi
 	return nil
 }
 
+// GetJob returns a snapshot of the job, or nil when it does not exist.
 func (svc *Service) GetJob(uuid job.JobUUID) (*job.Job, error) {
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 
 	if s, found := svc.jobs[uuid]; found {
-		return s, nil
+		return s.Snapshot(), nil
 	}
 
 	return nil, nil
 }
 
 func (svc *Service) GetJobsUUIDs() job.JobUUIDList {
-	svc.mapMutex.RLock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 
 	uuids := make([]job.JobUUID, 0, len(svc.jobs))
 	for k := range svc.jobs {
 		uuids = append(uuids, k)
 	}
-
-	svc.mapMutex.RUnlock()
 	return uuids
 }
 
@@ -1167,27 +1171,36 @@ func (svc *Service) Stop() error {
 	return nil
 }
 
+// GetAllJobs returns snapshots of all the jobs, in id order (creation order).
 func (svc *Service) GetAllJobs() []*job.Job {
-	// convert the jobs hashmap into a slice
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 
-	// in id order (creation order), like the jobs file
 	jobs := make([]*job.Job, 0, len(svc.jobs))
 	for _, id := range sortedJobIDs(svc.jobs) {
-		jobs = append(jobs, svc.jobs[id])
+		jobs = append(jobs, svc.jobs[id].Snapshot())
 	}
 	return jobs
 }
 
 func (svc *Service) GetLockedResources() job.LockedResources {
 	// get the locked resources currently in use by the jobs
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 	return svc.resourcesManager.GetLockedResources()
 }
 
 func (svc *Service) UnlockAllResources() error {
 	// this is used to unlock all resources in case of a blocking situation
 	// it is not used in normal operation (it is a safety net)
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	err := svc.unlockAllResourcesLocked()
+	svc.tryEnqueuePendingJobsLocked()
+	return err
+}
+
+func (svc *Service) unlockAllResourcesLocked() error {
 	svc.resourcesManager.UnlockAllResources()
 	svc.metrics.OnUnlockAllResources()
 	return svc.bp.OnAllResourcesUnlocked()
@@ -1196,10 +1209,13 @@ func (svc *Service) UnlockAllResources() error {
 func (svc *Service) UnlockResource(resourceName string) error {
 	// this is used to unlock a specific resource
 	// it is not used in normal operation (it is a safety net)
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
 	// topic of the job holding the resource (for the metrics)
 	topic := ""
 	if owner, locked := svc.resourcesManager.GetLockedResources()[resourceName]; locked {
-		if j, _ := svc.GetJob(owner); j != nil {
+		if j := svc.jobs[owner]; j != nil {
 			topic = j.Topic
 		}
 	}
@@ -1212,6 +1228,7 @@ func (svc *Service) UnlockResource(resourceName string) error {
 		}
 	}
 	svc.metrics.OnResourceUnlocked(resourceName, topic)
+	svc.tryEnqueuePendingJobsLocked()
 	return nil
 }
 
@@ -1246,39 +1263,35 @@ func (svc *Service) CheckJobsRetention() {
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
-	svc.DeleteOldCompletedJobs()
+	svc.deleteOldCompletedJobsLocked()
 }
 
 func (svc *Service) UpdateJobStatistics() {
-	svc.mu.Lock()
-	defer svc.mu.Unlock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 
 	// Update the job statistics
 	svc.metrics.UpdateJobStatistics(svc.jobs)
 }
 
-func (svc *Service) DeleteOldCompletedJobs() {
+func (svc *Service) deleteOldCompletedJobsLocked() {
 	// check if the retention policy is enabled
 	if !svc.conf.Jobs.RetentionPolicy.Enable {
 		return
 	}
 
 	// filter the completed jobs
-	svc.mapMutex.RLock()
 	completedJobs := make([]*job.Job, 0, len(svc.jobs))
 	for _, job := range svc.jobs {
 		if job.IsCompleted() {
 			completedJobs = append(completedJobs, job)
 		}
 	}
-	svc.mapMutex.RUnlock()
 
 	// Sort jobs by the oldest event in their history
 	sort.Slice(completedJobs, func(i, j int) bool {
 		return completedJobs[i].GetLastUpdateDate() < completedJobs[j].GetLastUpdateDate()
 	})
-
-	// check if the number of completed remaining jobs is too high
 
 	// check if the number of jobs is too high
 	cptCompletedJobsToDelete := 0
@@ -1296,7 +1309,7 @@ func (svc *Service) DeleteOldCompletedJobs() {
 	cptDeletedJobs := 0
 	for _, j := range completedJobs {
 		if cptDeletedJobs < cptCompletedJobsToDelete || now-j.GetLastUpdateDate() >= maxJobAge {
-			if err := svc.DeleteJob(j.JobUUID); err != nil {
+			if err := svc.deleteJobLocked(j.JobUUID); err != nil {
 				return
 			}
 			cptDeletedJobs++
@@ -1318,12 +1331,13 @@ func (svc *Service) CheckJobsVisibilityTimeout() {
 	defer svc.checkJobsVisibilityRunning.Store(false)
 
 	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// Create a list of jobs that have been running for too long
-	svc.mapMutex.RLock()
 	now := time.Now().UnixMilli()
-	runningForTooLongJobs := make([]*job.Job, 0, len(svc.jobs))
-	for _, j := range svc.jobs {
+	runningForTooLongJobs := make([]*job.Job, 0)
+	for _, id := range sortedJobIDs(svc.jobs) {
+		j := svc.jobs[id]
 		// Check if the job is running
 		if j.GetState() == job.JobRunning {
 			// Check if the job is running for too long
@@ -1332,9 +1346,6 @@ func (svc *Service) CheckJobsVisibilityTimeout() {
 			}
 		}
 	}
-	svc.mapMutex.RUnlock()
-
-	svc.mu.Unlock()
 
 	for _, j := range runningForTooLongJobs {
 		svc.logger.Info(
@@ -1342,11 +1353,11 @@ func (svc *Service) CheckJobsVisibilityTimeout() {
 			zap.String("method", "CheckJobsVisibilityTimeout"),
 			zap.String("JobUUID", string(j.JobUUID.String())),
 		)
-		_, _ = svc.FailJob(j.JobUUID)
+		_, _ = svc.failJobLocked(j.JobUUID)
 	}
 
 	if len(runningForTooLongJobs) > 0 {
-		svc.notifyTryEnqueuePendingJobs <- struct{}{}
+		svc.tryEnqueuePendingJobsLocked()
 	}
 }
 
@@ -1364,6 +1375,7 @@ func (svc *Service) CheckDelayedJobs() {
 	defer svc.checkJobsDelayRunning.Store(false)
 
 	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	// Check for delayed jobs
 
@@ -1372,6 +1384,7 @@ func (svc *Service) CheckDelayedJobs() {
 	// so the first job in the delayed queue is not ready to be started yet
 	// then the others are not ready too
 	minPriority := -time.Now().UnixMilli()
+	found := false
 	for {
 		// get the first job from the priority queue with priority >= minPriority
 		// here the priority is the retry time (negative value)
@@ -1380,10 +1393,12 @@ func (svc *Service) CheckDelayedJobs() {
 			break
 		}
 		// the job is ready to change it's state into JobPending
-		svc.SetJobStateToPending(j)
+		svc.setJobStateToPendingLocked(j)
+		found = true
 	}
-
-	svc.mu.Unlock()
+	if found {
+		svc.tryEnqueuePendingJobsLocked()
+	}
 }
 
 func (svc *Service) GetUptime() int64 {
@@ -1444,25 +1459,22 @@ func (svc *Service) Run() error {
 	// Notify that the service is ready
 	svc.eventNotifier.NotifyEvent(event.ServiceEventReady)
 
-	// note: calling methods on the service should be done in a goroutine
-	// to avoid blocking the main goroutine,
-	// specially to be able to process channel events (svc.notifChanBP)
+	// The periodic tasks run here, one at a time: they take the service lock and are
+	// short. Once this function returns, no task is left running.
 	for {
 		select {
-		case <-svc.notifyTryEnqueuePendingJobs:
-			go svc.TryEnqueuePendingJobs()
 		case <-pendingJobsTicker.C:
-			svc.notifyTryEnqueuePendingJobs <- struct{}{}
+			svc.TryEnqueuePendingJobs()
 		case <-jobRetryTicker.C:
-			go svc.AttemptJobRetries()
+			svc.AttemptJobRetries()
 		case <-jobVisibilityTicket.C:
-			go svc.CheckJobsVisibilityTimeout()
+			svc.CheckJobsVisibilityTimeout()
 		case <-jobDelayedTicker.C:
-			go svc.CheckDelayedJobs()
+			svc.CheckDelayedJobs()
 		case <-jobRetentionTicker.C:
-			go svc.CheckJobsRetention()
+			svc.CheckJobsRetention()
 		case <-jobStatsTicker.C:
-			go svc.UpdateJobStatistics()
+			svc.UpdateJobStatistics()
 		case <-svc.stopChan:
 			// Channel was closed, time to stop
 			// received a signal to stop the service
@@ -1470,12 +1482,11 @@ func (svc *Service) Run() error {
 			pendingJobsTicker.Stop()
 			jobRetryTicker.Stop()
 			jobVisibilityTicket.Stop()
+			jobDelayedTicker.Stop()
 			jobRetentionTicker.Stop()
+			jobStatsTicker.Stop()
 			// stop and wait for the job backend provider to end (synchronous)
 			_ = svc.bp.Stop()
-			// stop the service itself
-			// must be ok (synchronous)
-			// svc.wg.Wait()
 			// stop the main goroutine (the service is stopped)
 			return nil
 		case event := <-svc.notifChanBP:
@@ -1491,7 +1502,9 @@ func (svc *Service) Run() error {
 				pendingJobsTicker.Stop()
 				jobRetryTicker.Stop()
 				jobVisibilityTicket.Stop()
+				jobDelayedTicker.Stop()
 				jobRetentionTicker.Stop()
+				jobStatsTicker.Stop()
 				// stop and wait for the job backend provider to end (synchronous)
 				_ = svc.bp.Stop()
 				// stop the main goroutine (the service is stopped)
@@ -1508,6 +1521,17 @@ func (svc *Service) Run() error {
 			}
 		}
 	}
+}
+
+func requiresLockedResources(lockedResources job.LockedResources, job *job.Job) bool {
+	// Helper function to check if a job requires locked resources
+	for _, r := range job.LockResources {
+		if _, found := lockedResources[r]; found {
+			return true
+		}
+	}
+
+	return false
 }
 
 // compareQueueOrder orders jobs as the queue serves them: highest priority first, then the
@@ -1533,17 +1557,6 @@ func sortedJobIDs(jobs job.JobMap) []job.JobUUID {
 	return ids
 }
 
-func requiresLockedResources(lockedResources job.LockedResources, job *job.Job) bool {
-	// Helper function to check if a job requires locked resources
-	for _, r := range job.LockResources { // BUG: fatal error: concurrent map read and map write
-		if _, found := lockedResources[r]; found {
-			return true
-		}
-	}
-
-	return false
-}
-
 func jobEqual(a, b *job.Job) bool {
 	// Equality function for comparing jobs by pointer address
 	if a == nil || b == nil {
@@ -1558,22 +1571,21 @@ func NewService(logger *zap.Logger, conf *config.Config, version string) (*Servi
 		return nil, err
 	}
 	return &Service{
-		version:                     version,
-		logger:                      logger,
-		conf:                        conf,
-		bp:                          bp,
-		jobs:                        make(job.JobMap),
-		pendingJobs:                 make(job.JobMap),
-		pqRetryJobs:                 *pq.NewPriorityQueue(jobEqual),
-		pqDelayedJobs:               *pq.NewPriorityQueue(jobEqual),
-		notifChanBP:                 make(chan jobbackendprovider.Event, 1000),
-		notifyTryEnqueuePendingJobs: make(chan struct{}, 1000),
-		stopChan:                    make(chan struct{}),
-		metrics:                     metrics.NewServiceMetrics(conf.WebServer.Metrics.Enable),
-		callbackService:             callback.NewCallbackService(logger),
-		eventLogger:                 eventlogger.NewEventLoggerObserver(conf.EventsLogger.FilePath),
-		eventNotifier:               event.NewServiceEventNotifier(),
-		resourcesManager:            NewResourcesManager(logger),
+		version:          version,
+		logger:           logger,
+		conf:             conf,
+		bp:               bp,
+		jobs:             make(job.JobMap),
+		pendingJobs:      make(job.JobMap),
+		pqRetryJobs:      *pq.NewPriorityQueue(jobEqual),
+		pqDelayedJobs:    *pq.NewPriorityQueue(jobEqual),
+		notifChanBP:      make(chan jobbackendprovider.Event, 1000),
+		stopChan:         make(chan struct{}),
+		metrics:          metrics.NewServiceMetrics(conf.WebServer.Metrics.Enable),
+		callbackService:  callback.NewCallbackService(logger),
+		eventLogger:      eventlogger.NewEventLoggerObserver(conf.EventsLogger.FilePath),
+		eventNotifier:    event.NewServiceEventNotifier(),
+		resourcesManager: NewResourcesManager(logger),
 	}, nil
 }
 
@@ -1627,8 +1639,8 @@ type GetJobsResponse struct {
 }
 
 func (svc *Service) GetJobs(req *GetJobsRequest) (*GetJobsResponse, error) {
-	svc.mapMutex.RLock()
-	defer svc.mapMutex.RUnlock()
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
 
 	// Convert jobs map to slice for processing
 	allJobs := make([]*job.Job, 0, len(svc.jobs))
@@ -1659,11 +1671,12 @@ func (svc *Service) GetJobs(req *GetJobsRequest) (*GetJobsResponse, error) {
 		end = total
 	}
 
-	var paginatedJobs []*job.Job
+	// snapshots of the jobs of the page (the caller reads them after the lock is released)
+	paginatedJobs := []*job.Job{}
 	if start < total {
-		paginatedJobs = filteredJobs[start:end]
-	} else {
-		paginatedJobs = []*job.Job{}
+		for _, j := range filteredJobs[start:end] {
+			paginatedJobs = append(paginatedJobs, j.Snapshot())
+		}
 	}
 
 	return &GetJobsResponse{
@@ -1733,7 +1746,6 @@ func stringToJobState(status string) job.JobState {
 		return job.JobNoState
 	}
 }
-
 func (svc *Service) sortJobs(jobs []*job.Job, sortParam string) {
 	if sortParam == "" {
 		sortParam = "created_desc" // Default sort
