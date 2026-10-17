@@ -1189,12 +1189,20 @@ func (svc *Service) UnlockAllResources() error {
 	// this is used to unlock all resources in case of a blocking situation
 	// it is not used in normal operation (it is a safety net)
 	svc.resourcesManager.UnlockAllResources()
+	svc.metrics.OnUnlockAllResources()
 	return svc.bp.OnAllResourcesUnlocked()
 }
 
 func (svc *Service) UnlockResource(resourceName string) error {
 	// this is used to unlock a specific resource
 	// it is not used in normal operation (it is a safety net)
+	// topic of the job holding the resource (for the metrics)
+	topic := ""
+	if owner, locked := svc.resourcesManager.GetLockedResources()[resourceName]; locked {
+		if j, _ := svc.GetJob(owner); j != nil {
+			topic = j.Topic
+		}
+	}
 	if err := svc.resourcesManager.UnlockResource(resourceName); err != nil {
 		return &apierror.APIError{
 			Message:  err.Error(),
@@ -1203,6 +1211,7 @@ func (svc *Service) UnlockResource(resourceName string) error {
 			Err:      err,
 		}
 	}
+	svc.metrics.OnResourceUnlocked(resourceName, topic)
 	return nil
 }
 

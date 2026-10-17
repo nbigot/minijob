@@ -20,4 +20,6 @@ type IServiceMetrics interface {
 	NotifyJobEvent(*job.Job, event.ServiceEventType)
 	UpdateResourcesLockedCountMetric(topic string, inc int)
 	UpdateJobStatistics(m job.JobMap)
+	OnUnlockAllResources()
+	OnResourceUnlocked(resource string, topic string)
 }
