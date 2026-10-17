@@ -53,6 +53,7 @@ dockers:
       - --label=org.opencontainers.image.licenses=MIT
     extra_files:
       - config-templates/docker/config/config.yaml
+      - config-templates/docker/config/schema.json
   -
     #skip_push: false
     id: minijob-amd64-v3
@@ -77,6 +78,7 @@ dockers:
       - --label=org.opencontainers.image.licenses=MIT
     extra_files:
       - config-templates/docker/config/config.yaml
+      - config-templates/docker/config/schema.json
   -
     #skip_push: false
     id: minijob-arm64-v8
@@ -100,6 +102,7 @@ dockers:
       - --label=org.opencontainers.image.licenses=MIT
     extra_files:
       - config-templates/docker/config/config.yaml
+      - config-templates/docker/config/schema.json
   -
     #skip_push: false
     id: minijob-arm-v7
@@ -124,6 +127,7 @@ dockers:
       - --label=org.opencontainers.image.licenses=MIT
     extra_files:
       - config-templates/docker/config/config.yaml
+      - config-templates/docker/config/schema.json
 
 docker_manifests:
   # https://goreleaser.com/customization/docker_manifest/
