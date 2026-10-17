@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -50,10 +51,7 @@ func WithFiberLogger() webserver.ServerOption {
 func WithCors() webserver.ServerOption {
 	return func(s *webserver.Server) {
 		if s.GetWebConfig().Cors.Enable {
-			handler, err := newCors(cors.Config{
-				AllowOrigins: s.GetWebConfig().Cors.AllowOrigins,
-				AllowHeaders: s.GetWebConfig().Cors.AllowHeaders,
-			})
+			handler, err := newCors(corsConfig(s.GetWebConfig().Cors.AllowOrigins, s.GetWebConfig().Cors.AllowHeaders))
 			if err != nil {
 				s.SetInitError(err)
 				return
@@ -61,6 +59,17 @@ func WithCors() webserver.ServerOption {
 			s.GetApp().Use(handler)
 		}
 	}
+}
+
+// corsConfig is the CORS configuration of the server. The origins are trimmed: Fiber looks
+// for a wildcard ("https://*.example.com") before trimming each entry, so a wildcard
+// entry after ", " never matched.
+func corsConfig(allowOrigins, allowHeaders string) cors.Config {
+	origins := strings.Split(allowOrigins, ",")
+	for i, origin := range origins {
+		origins[i] = strings.TrimSpace(origin)
+	}
+	return cors.Config{AllowOrigins: strings.Join(origins, ","), AllowHeaders: allowHeaders}
 }
 
 // newCors creates the CORS middleware. Fiber panics on an invalid origin: the panic is
