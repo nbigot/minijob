@@ -19,7 +19,7 @@ func GetFiberConfig() fiber.Config {
 		IdleTimeout:             time.Duration(10) * time.Second,
 		ReadTimeout:             time.Duration(10) * time.Second,
 		WriteTimeout:            time.Duration(10) * time.Second,
-		ReadBufferSize:          4096,
+		ReadBufferSize:          8192, // largest request headers (beyond: 431)
 		WriteBufferSize:         4096,
 		CompressedFileSuffix:    ".gz",
 		GETOnly:                 false,
