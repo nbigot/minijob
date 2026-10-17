@@ -69,7 +69,7 @@ func (s *Server) Initialize(ctx context.Context, options ...ServerOption) error 
 		return fmt.Errorf("cannot initilize server: invalid status code %d", status)
 	}
 	s.ctx = ctx
-	signal.Notify(s.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signal.Notify(s.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	s.webAPIServer = web.NewWebAPIServer(s.appConfig, s.fiberConfig, s.service, func() { _ = s.Shutdown() }, func() { s.RequestRestartServer() })
 	if err := s.webAPIServer.Init(); err != nil {
 		return err
@@ -263,6 +263,10 @@ func (s *Server) HandleSignals() error {
 			case syscall.SIGINT:
 				// handle Ctrl+C (SIGINT)
 				s.logger.Info("Received SIGINT (Ctrl+C), shutting down server...", zap.String("topic", "server"), zap.String("method", "HandleSignals"))
+				return nil
+			case syscall.SIGQUIT:
+				// stop server due to a signal SIGQUIT (graceful, like SIGTERM)
+				s.logger.Info("Received SIGQUIT, shutting down server...", zap.String("topic", "server"), zap.String("method", "HandleSignals"))
 				return nil
 			}
 		case err := <-s.errsChan:
