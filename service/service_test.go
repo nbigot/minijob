@@ -16,8 +16,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nbigot/minijob/config"
+	"github.com/nbigot/minijob/constants"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider/registry"
+	"github.com/nbigot/minijob/web/apierror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -398,4 +400,27 @@ func TestCreatedJobIsScheduledAfterLoad(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Stop() })
 	assert.Equal(t, job.JobQueued, stateOf(t, svc, ids[0]))
 	assert.Equal(t, job.JobDelayed, stateOf(t, svc, ids[1]))
+}
+
+func TestBackendMaxJobsIsEnforced(t *testing.T) {
+	svc, err := CreateAndInitService(testConfig(t, "        maxJobs: 10000000\n", "        maxJobs: 3\n"), "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Stop() })
+	var first job.JobUUID
+	for i := 0; i < 3; i++ {
+		id := createJob(t, svc, `{"properties":{}}`)
+		if i == 0 {
+			first = id
+		}
+	}
+	_, err = svc.CreateJob([]byte(`{"properties":{}}`))
+	var apiErr *apierror.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, 503, apiErr.HttpCode)
+	assert.Equal(t, constants.ErrorCantCreateJob, apiErr.Code)
+	assert.Equal(t, "cannot create job", apiErr.Message)
+	_, err = svc.CloneJob(first)
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, 503, apiErr.HttpCode)
+	assert.Equal(t, uint(3), svc.GetJobsCount(), "no job is added beyond the limit")
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -222,6 +223,22 @@ func (svc *Service) CreateJob(payload []byte) (*job.Job, error) {
 // finalizeJobCreationLocked adds a new job and schedules it. It returns the job as it was
 // created (pending or delayed), before it is queued.
 func (svc *Service) finalizeJobCreationLocked(j *job.Job) (*job.Job, error) {
+	// the backend cannot store more jobs: refuse the job before anything changes
+	if maxJobs := svc.bp.GetMaxJobs(); maxJobs > 0 && uint(len(svc.jobs)) >= maxJobs {
+		err := fmt.Errorf("cannot create job, max limit reached: %d", maxJobs)
+		svc.logger.Error(
+			"Cannot create job",
+			zap.String("topic", "service"),
+			zap.String("method", "FinalizeJobCreation"),
+			zap.Error(err),
+		)
+		return nil, &apierror.APIError{
+			Message:  "cannot create job",
+			Code:     constants.ErrorCantCreateJob,
+			HttpCode: fiber.StatusServiceUnavailable,
+			Err:      err,
+		}
+	}
 	now := time.Now().UnixMilli()
 	newJobUuid, err := svc.generateNewJobUuidLocked()
 	if err != nil {

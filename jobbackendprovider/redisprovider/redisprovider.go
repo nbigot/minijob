@@ -553,3 +553,7 @@ func NewRedisJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbac
 		restoreFlag:    false,
 	}, nil
 }
+
+func (p *RedisJobBackendProvider) GetMaxJobs() uint {
+	return p.maxJobs
+}

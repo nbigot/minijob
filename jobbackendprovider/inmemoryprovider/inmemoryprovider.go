@@ -476,3 +476,7 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 
 // testHookBeforeSave runs in sync after the changes to save are counted (tests only).
 var testHookBeforeSave func()
+
+func (p *InMemoryJobBackendProvider) GetMaxJobs() uint {
+	return p.maxJobs
+}

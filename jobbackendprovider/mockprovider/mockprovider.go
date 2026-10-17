@@ -320,3 +320,8 @@ func NewMockJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobback
 		restoreFlag:    false,
 	}, nil
 }
+
+// GetMaxJobs: the mock backend does not limit the number of jobs.
+func (p *MockJobBackendProvider) GetMaxJobs() uint {
+	return 0
+}
