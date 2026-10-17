@@ -145,10 +145,14 @@ func (svc *Service) LoadJobs() error {
 	svc.bp.SetRestoreFlag(true)
 	svc.pendingJobs = make(job.JobMap)
 	now := time.Now().UnixMilli()
+	var created []*job.Job
 	// in id order, so that topics and metrics are registered in creation order
 	for _, id := range sortedJobIDs(svc.jobs) {
 		j := svc.jobs[id]
 		switch j.GetState() {
+		case job.JobCreated:
+			// saved between its creation and its first scheduling: scheduled below
+			created = append(created, j)
 		case job.JobPending:
 			svc.pendingJobs[j.JobUUID] = j
 		case job.JobHidden:
@@ -162,6 +166,18 @@ func (svc *Service) LoadJobs() error {
 	}
 	// allow the backend provider to process notifications
 	svc.bp.SetRestoreFlag(false)
+
+	// schedule the jobs that were saved before their first scheduling, like new jobs
+	for _, j := range created {
+		if j.StartAfter != 0 && j.StartAfter > time.Now().UnixMilli() {
+			svc.setJobStateToDelayedLocked(j)
+		} else {
+			svc.setJobStateToPendingLocked(j)
+		}
+	}
+	if len(created) > 0 {
+		svc.tryEnqueuePendingJobsLocked()
+	}
 
 	return nil
 }
