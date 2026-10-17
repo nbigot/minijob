@@ -213,6 +213,9 @@ func (p *InMemoryJobBackendProvider) OnJobTimeout(j *job.Job) error {
 	return nil
 }
 
+// WaitWrites returns at once: the jobs are saved periodically.
+func (p *InMemoryJobBackendProvider) WaitWrites() {}
+
 func (p *InMemoryJobBackendProvider) OnJobsDeleted() error {
 	p.mapMutex.Lock()
 	p.jobs = make(job.JobMap)

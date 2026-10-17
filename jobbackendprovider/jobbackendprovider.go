@@ -70,6 +70,8 @@ type IJobBackendProvider interface {
 	OnJobsDeleted() error
 	OnAllResourcesUnlocked() error
 	OnResourceUnlocked(j *job.Job, resource string) error
+	// WaitWrites returns once the changes made before the call were written (or failed once)
+	WaitWrites()
 	NotifyEvent(ev event.ServiceEventType)
 	NotifyTopicEvent(ev event.ServiceEventType, topic string)
 	NotifyJobEvent(j *job.Job, ev event.ServiceEventType)

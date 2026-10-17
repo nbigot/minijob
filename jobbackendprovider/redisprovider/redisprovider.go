@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,16 +21,24 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	jobKeyPattern = "job:*" // keys of the jobs
+	scanCount     = 1000    // keys asked per SCAN call
+	mgetCount     = 500     // keys read per MGET call
+)
+
+// RedisJobBackendProvider stores each job in a Redis string (key job:<uuid>, value the job
+// JSON). The changes are written by a writer goroutine, in order (see writer).
 type RedisJobBackendProvider struct {
 	// implements IJobBackendProvider & IServiceEventObserver interfaces
 	logger         *zap.Logger
 	logVerbosity   int
-	mu             sync.Mutex
 	maxJobs        uint // maxJobs is the maximum number of jobs that can be stored in the backend
 	finishedJobTTL uint // FinishedJobTTL is the time to live for finished jobs in seconds
 	redisClient    *redis.Client
 	redisOptions   *redis.Options
-	lc             *lifecycle.Lifecycle // runs the notification loop once, stops it once
+	writer         *writer
+	lc             *lifecycle.Lifecycle // runs Run once, stops it once
 	closeOnce      sync.Once
 	notifChan      chan jobbackendprovider.Event
 	ctx            context.Context
@@ -41,22 +50,20 @@ func (p *RedisJobBackendProvider) SetNotifChan(notifChan chan jobbackendprovider
 }
 
 func (p *RedisJobBackendProvider) Init() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.ctx = context.Background()
 
 	p.redisClient = redis.NewClient(p.redisOptions)
+	p.writer = newWriter(p.logger, p.redisClient)
 
-	// Enable keyspace notifications for the key
-	err := p.redisClient.ConfigSet(p.ctx, "notify-keyspace-events", "KEA").Err()
-	if err != nil {
-		return &apierror.APIError{
-			Message:  "cannot configure redis",
-			Code:     constants.ErrorDatabaseUnavailable,
-			HttpCode: fiber.StatusServiceUnavailable,
-			Err:      errors.New("failed to enable keyspace notifications"),
-		}
+	// Keyspace notifications are enabled for the other clients of the database; minijob
+	// does not use them, and a managed Redis may refuse the command: a warning only.
+	if err := p.redisClient.ConfigSet(p.ctx, "notify-keyspace-events", "KEA").Err(); err != nil {
+		p.logger.Warn(
+			"Cannot enable Redis keyspace notifications",
+			zap.String("topic", "backendProvider"),
+			zap.String("method", "Init"),
+			zap.Error(err),
+		)
 	}
 	// var err error
 
@@ -76,13 +83,17 @@ func (p *RedisJobBackendProvider) Shutdown() {
 }
 
 func (p *RedisJobBackendProvider) Stop() error {
-	// stop the loop, then close the client (once: Stop is called by the service and again
-	// by the observers shutdown)
+	// stop Run, write the pending changes, then close the client (once: Stop is called by
+	// the service and again by the observers shutdown)
 	p.lc.Stop()
 	var err error
 	p.closeOnce.Do(func() {
-		p.mu.Lock()
-		defer p.mu.Unlock()
+		if p.writer != nil {
+			p.writer.stop()
+		}
+		if p.redisClient == nil {
+			return
+		}
 		if err = p.redisClient.Close(); err != nil {
 			p.logger.Error("Error closing Redis client", zap.Error(err))
 		}
@@ -124,10 +135,9 @@ func (p *RedisJobBackendProvider) JobExists(jobUUID job.JobUUID) (bool, error) {
 	return exists > 0, nil
 }
 
+// LoadJobs reads every job (SCAN, then MGET), then starts the writer.
 func (p *RedisJobBackendProvider) LoadJobs() (job.JobMap, error) {
-	// load all jobs from redis
-	jobMap := make(job.JobMap)
-	jobKeys, err := p.redisClient.Keys(p.ctx, "job:*").Result()
+	jobKeys, err := p.scanJobKeys()
 	if err != nil {
 		p.logger.Error("Error getting job keys from Redis", zap.Error(err))
 		return nil, &apierror.APIError{
@@ -138,8 +148,33 @@ func (p *RedisJobBackendProvider) LoadJobs() (job.JobMap, error) {
 		}
 	}
 
-	for _, jobKey := range jobKeys {
-		jobJSON, err := p.redisClient.Get(p.ctx, jobKey).Result()
+	jobMap, err := p.getJobs(jobKeys)
+	if err != nil {
+		return nil, err
+	}
+	p.writer.start()
+	return jobMap, nil
+}
+
+// scanJobKeys returns the job keys, sorted (SCAN may return a key more than once).
+func (p *RedisJobBackendProvider) scanJobKeys() ([]string, error) {
+	var keys []string
+	iter := p.redisClient.Scan(p.ctx, 0, jobKeyPattern, scanCount).Iterator()
+	for iter.Next(p.ctx) {
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys), nil
+}
+
+// getJobs reads the jobs of the keys; a key that expired since the scan is skipped.
+func (p *RedisJobBackendProvider) getJobs(keys []string) (job.JobMap, error) {
+	jobMap := make(job.JobMap, len(keys))
+	for start := 0; start < len(keys); start += mgetCount {
+		values, err := p.redisClient.MGet(p.ctx, keys[start:min(start+mgetCount, len(keys))]...).Result()
 		if err != nil {
 			p.logger.Error("Error getting job from Redis", zap.Error(err))
 			return nil, &apierror.APIError{
@@ -150,19 +185,23 @@ func (p *RedisJobBackendProvider) LoadJobs() (job.JobMap, error) {
 			}
 		}
 
-		j, err := job.NewJob([]byte(jobJSON))
-		if err != nil {
-			p.logger.Error("Error load job from JSON", zap.Error(err))
-			return nil, &apierror.APIError{
-				Message:  "cannot load job",
-				Code:     constants.ErrorCantCreateJob,
-				HttpCode: fiber.StatusBadRequest,
-				Err:      err,
+		for _, value := range values {
+			jobJSON, found := value.(string)
+			if !found {
+				continue
 			}
+			j, err := job.NewJob([]byte(jobJSON))
+			if err != nil {
+				p.logger.Error("Error load job from JSON", zap.Error(err))
+				return nil, &apierror.APIError{
+					Message:  "cannot load job",
+					Code:     constants.ErrorCantCreateJob,
+					HttpCode: fiber.StatusBadRequest,
+					Err:      err,
+				}
+			}
+			jobMap[j.JobUUID] = j
 		}
-
-		j.SetStateFromHistory()
-		jobMap[j.JobUUID] = j
 	}
 
 	return jobMap, nil
@@ -226,15 +265,7 @@ func (p *RedisJobBackendProvider) OnJobTerminated(j *job.Job) error {
 }
 
 func (p *RedisJobBackendProvider) OnJobDeleted(jobUUID job.JobUUID) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// delete job from redis
-	if err := p.redisClient.Del(p.ctx, JobUUID2RedisKey(jobUUID)).Err(); err != nil {
-		p.logger.Error("Error deleting job from Redis", zap.Error(err))
-		return err
-	}
-
+	p.writer.push(writeOp{key: JobUUID2RedisKey(jobUUID), del: true})
 	return nil
 }
 
@@ -243,10 +274,8 @@ func (p *RedisJobBackendProvider) OnJobStarted(j *job.Job) error {
 }
 
 func (p *RedisJobBackendProvider) OnJobSucceeded(j *job.Job) error {
-	if err := p.SaveJob(j); err != nil {
-		return err
-	}
-	return p.SetJobTTL(j)
+	// the job is kept finishedJobTTL seconds (0: forever)
+	return p.saveJob(j, time.Duration(p.finishedJobTTL)*time.Second)
 }
 
 func (p *RedisJobBackendProvider) OnJobTimeout(j *job.Job) error {
@@ -270,9 +299,11 @@ func (p *RedisJobBackendProvider) OnJobEnqueued(j *job.Job) error {
 }
 
 func (p *RedisJobBackendProvider) SaveJob(j *job.Job) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	return p.saveJob(j, 0)
+}
 
+// saveJob queues the write of the job as it is now (the caller holds the service lock).
+func (p *RedisJobBackendProvider) saveJob(j *job.Job, ttl time.Duration) error {
 	// serialize job info into a JSON string
 	jobJSON, err := j.ToJSON()
 	if err != nil {
@@ -280,78 +311,39 @@ func (p *RedisJobBackendProvider) SaveJob(j *job.Job) error {
 		return err
 	}
 
-	// save job to redis
-	if err := p.redisClient.Set(p.ctx, JobUUID2RedisKey(j.JobUUID), jobJSON, 0).Err(); err != nil {
-		p.logger.Error("Error saving job to Redis", zap.Error(err))
-		return err
-	}
-
-	return nil
-}
-
-func (p *RedisJobBackendProvider) SetJobTTL(j *job.Job) error {
-	if p.finishedJobTTL == 0 {
-		// no TTL set (keep job forever in redis)
-		return nil
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// set TTL for job
-	duration := time.Duration(p.finishedJobTTL) * time.Second
-	if err := p.redisClient.Expire(p.ctx, JobUUID2RedisKey(j.JobUUID), duration).Err(); err != nil {
-		p.logger.Error("Error setting TTL for job in Redis", zap.Error(err))
-		return err
-	}
-
+	p.writer.push(writeOp{key: JobUUID2RedisKey(j.JobUUID), value: jobJSON, ttl: ttl})
 	return nil
 }
 
 func (p *RedisJobBackendProvider) OnJobsDeleted() error {
-	// delete all jobs from redis
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	// delete all keys starting with "job:"
-	jobKeys, err := p.redisClient.Keys(p.ctx, "job:*").Result()
-	if err != nil {
-		p.logger.Error("Error getting job keys from Redis", zap.Error(err))
-		return err
-	}
-
-	for _, jobKey := range jobKeys {
-		if err := p.redisClient.Del(p.ctx, jobKey).Err(); err != nil {
-			p.logger.Error("Error deleting job from Redis", zap.Error(err))
-			return err
-		}
-	}
-
+	p.writer.push(writeOp{delAll: true})
 	return nil
 }
 
-func (p *RedisJobBackendProvider) OnAllResourcesUnlocked() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// WaitWrites returns once the changes made before the call were written, or failed once
+// (they are then retried in the background).
+func (p *RedisJobBackendProvider) WaitWrites() {
+	if p.writer != nil {
+		p.writer.wait()
+	}
+}
 
+func (p *RedisJobBackendProvider) OnAllResourcesUnlocked() error {
 	// TODO
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventAllResourcesUnlocked})
 	return nil
 }
 
 func (p *RedisJobBackendProvider) OnResourceUnlocked(j *job.Job, resource string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	// TODO
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventResourceUnlocked, JobUUID: j.JobUUID, Resource: &resource})
 	return nil
 }
 
+// Healthcheck is false when Redis cannot be reached or when changes could not be written
+// yet (they are retried).
 func (p *RedisJobBackendProvider) Healthcheck() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	// not redis client is not set yet then assume it is healthy
 	if p.redisClient == nil {
 		return true
@@ -362,7 +354,7 @@ func (p *RedisJobBackendProvider) Healthcheck() bool {
 		return false
 	}
 
-	return true
+	return p.writer.healthy()
 }
 
 func (p *RedisJobBackendProvider) NotifyChange(event jobbackendprovider.Event) {
@@ -383,97 +375,15 @@ func (p *RedisJobBackendProvider) NotifyChange(event jobbackendprovider.Event) {
 }
 
 func (p *RedisJobBackendProvider) Run() error {
-	// this function must be called in a goroutine
+	// this function must be called in a goroutine; the changes are written by the writer
+	// (started by LoadJobs), Run only waits for the stop
 	if !p.lc.Begin() {
 		return errors.New("provider is already running or stopped")
 	}
 	defer p.lc.End()
 
-	// listen to redis notifications
-	// https://redis.io/topics/notifications
-	// https://pkg.go.dev/github.com/go-redis/redis/v9#example-Client.Subscribe
-	// https://pkg.go.dev/github.com/go-redis/redis/v9#example-Client.PSubscribe
-
-	key := "ev:job:*"
-	pubsub := p.redisClient.Subscribe(p.ctx, "__keyspace@0__:"+key)
-	defer func() {
-		_ = pubsub.Close()
-	}()
-
-	ch := pubsub.Channel()
-
-	fmt.Printf("Listening for changes to key: %s\n", key)
-
-	for {
-		select {
-		case msg := <-ch:
-			if msg.Payload == "set" {
-				value, err := p.redisClient.Get(p.ctx, key).Result()
-				if err != nil {
-					p.logger.Info("Error getting value for key", zap.String("key", key), zap.Error(err))
-					continue
-				}
-				fmt.Printf("New value for key %s: %s\n", key, value)
-			}
-		case <-p.lc.Stopping():
-			return nil
-		}
-	}
-
-	// // subscribe to all channels
-	// pubsub := s.redisClient.PSubscribe(s.ctx, "chan:job:event:*")
-	// defer pubsub.Close()
-
-	// // Wait for confirmation that subscription is created before publishing anything.
-	// _, err := pubsub.Receive(s.ctx)
-	// if err != nil {
-	// 	s.logger.Error("Error subscribing to Redis", zap.Error(err))
-	// 	return err
-	// }
-
-	// // Go channel which receives messages.
-	// ch := pubsub.Channel()
-
-	// // Consume messages.
-	// for msg := range ch {
-	// 	s.logger.Info("Received message", zap.String("channel", msg.Channel), zap.String("payload", msg.Payload))
-	// }
-
-	// // listen to notifications
-
-	// // listen to notifChan
-
-	// // process events
-
-	// // TODO
-	// for {
-	// 	select {
-	// 	case event := <-s.notifChan:
-	// 		switch event.Type {
-	// 		case "create":
-	// 			// job, err := svc.bp.GetStreamInfo(event.JobUUID)
-	// 			// if err != nil {
-	// 			// 	svc.logger.Error(
-	// 			// 		"Error while getting stream info",
-	// 			// 		zap.String("topic", "job"),
-	// 			// 		zap.String("method", "Run"),
-	// 			// 		zap.String("JobUUID", event.JobUUID.String()),
-	// 			// 		zap.Error(err),
-	// 			// 	)
-	// 			// 	continue
-	// 			// }
-	// 			// if job == nil {
-	// 			// 	svc.logger.Error(
-	// 			// 		"Stream not found",
-	// 			// 		zap.String("topic", "job"),
-	// 			// 		zap.String("method", "Run"),
-	// 			// 		zap.String("JobUUID", event.JobUUID.String()),
-	// 			// 	)
-	// 			// 	continue
-	// 			// }
-	// 		}
-	// 	}
-	// }
+	<-p.lc.Stopping()
+	return nil
 }
 
 func (p *RedisJobBackendProvider) NotifyEvent(ev event.ServiceEventType) {

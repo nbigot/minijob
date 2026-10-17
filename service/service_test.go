@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
@@ -423,4 +424,30 @@ func TestBackendMaxJobsIsEnforced(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, 503, apiErr.HttpCode)
 	assert.Equal(t, uint(3), svc.GetJobsCount(), "no job is added beyond the limit")
+}
+
+func TestRedisBackendKeepsTheJobs(t *testing.T) {
+	m := miniredis.RunT(t)
+	redisBackend := "    type: \"redis\"\n    redis:\n        url: \"redis://" + m.Addr() + "/0\"\n" +
+		"        maxJobs: 1000\n        finishedJobTTL: 60\n"
+	conf := testConfig(t, "    type: \"inMemory\"\n", redisBackend)
+	svc, err := CreateAndInitService(conf, "test")
+	require.NoError(t, err)
+	go func() { _ = svc.Run() }()
+	done := createJob(t, svc, `{"properties":{"n":12345678901234567890}}`)
+	pullOne(t, svc, done)
+	require.NoError(t, svc.SetJobAsSuccessful(done))
+	queued := createJob(t, svc, `{"properties":{}}`)
+	// the answers are given once the changes are in Redis
+	assert.Equal(t, 60*time.Second, m.TTL("job:"+done.String()))
+	assert.True(t, m.Exists("job:"+queued.String()))
+	require.NoError(t, svc.Stop())
+
+	restarted, err := CreateAndInitService(conf, "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = restarted.Stop() })
+	assert.Equal(t, job.JobSucceeded, stateOf(t, restarted, done))
+	assert.Equal(t, job.JobQueued, stateOf(t, restarted, queued))
+	j, _ := restarted.GetJob(done)
+	assert.Equal(t, uint64(12345678901234567890), j.JobProperties["n"])
 }
