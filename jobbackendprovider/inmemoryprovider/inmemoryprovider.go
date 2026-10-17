@@ -11,6 +11,7 @@ import (
 	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
+	"github.com/nbigot/minijob/lifecycle"
 
 	"go.uber.org/zap"
 )
@@ -27,9 +28,7 @@ type InMemoryJobBackendProvider struct {
 	writeFrequency          int                           // writeFrequency is the frequency in seconds to write the jobs to the storage
 	enablePersistentStorage bool                          // enablePersistentStorage is a flag to enable persistent storage
 	storage                 *DBFileStorage                // storage is the storage to save the jobs
-	running                 atomic.Bool                   // Add this to track if the provider is running
-	wg                      sync.WaitGroup                // wg is a wait group to wait for the Run function to finish
-	stopChan                chan bool                     // stopChan is a channel to stop the Run function
+	lc                      *lifecycle.Lifecycle          // runs the save loop once, stops it once
 	notifChan               chan jobbackendprovider.Event // notifChan is a channel to send notifications to the service
 	restoreFlag             bool                          // restoreFlag is a flag to indicate if the provider is in restore mode
 }
@@ -53,14 +52,11 @@ func (p *InMemoryJobBackendProvider) Shutdown() {
 }
 
 func (p *InMemoryJobBackendProvider) Stop() error {
-	if !p.running.Load() {
-		return errors.New("provider is not running")
+	// stop the save loop (it saves the jobs before it returns); when it never ran, save
+	// them here
+	if !p.lc.Stop() {
+		return p.sync()
 	}
-
-	// send stop notification
-	p.stopChan <- true
-	// wait for the Run function to finish
-	p.wg.Wait()
 	return nil
 }
 
@@ -235,15 +231,10 @@ func (p *InMemoryJobBackendProvider) NotifyChange(event jobbackendprovider.Event
 }
 
 func (p *InMemoryJobBackendProvider) Run() error {
-	if !p.running.CompareAndSwap(false, true) {
-		// send an error if the provider is already running into p.notifChan for the service to handle it
-		p.notifChan <- jobbackendprovider.Event{Type: jobbackendprovider.EventFatalError}
-		return errors.New("provider is already running")
+	if !p.lc.Begin() {
+		return errors.New("provider is already running or stopped")
 	}
-	defer p.running.Store(false)
-
-	// this function must be called in a goroutine
-	p.wg.Add(1)
+	defer p.lc.End()
 
 	// create a ticker to save the jobs to the storage
 	ticker := time.NewTicker(time.Duration(p.writeFrequency) * time.Second)
@@ -253,12 +244,10 @@ func (p *InMemoryJobBackendProvider) Run() error {
 		case <-ticker.C:
 			// save jobs to storage every writeFrequency seconds
 			_ = p.sync()
-		case <-p.stopChan:
+		case <-p.lc.Stopping():
 			// save jobs to storage before exiting
 			ticker.Stop()
-			err := p.sync()
-			p.wg.Done()
-			return err
+			return p.sync()
 		}
 	}
 }
@@ -466,7 +455,7 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 		enablePersistentStorage: conf.Backend.InMemory.EnablePersistentStorage,
 		storage:                 NewDBFileStorage(logger, conf.Backend.InMemory.Directory, conf.Backend.InMemory.Filename),
 		hasChanged:              atomic.Bool{},
-		stopChan:                make(chan bool, 1),
+		lc:                      lifecycle.New(),
 		restoreFlag:             false,
 	}, nil
 }

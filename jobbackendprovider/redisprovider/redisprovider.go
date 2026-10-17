@@ -13,6 +13,7 @@ import (
 	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
+	"github.com/nbigot/minijob/lifecycle"
 	"github.com/nbigot/minijob/web/apierror"
 
 	"github.com/redis/go-redis/v9"
@@ -28,8 +29,8 @@ type RedisJobBackendProvider struct {
 	finishedJobTTL uint // FinishedJobTTL is the time to live for finished jobs in seconds
 	redisClient    *redis.Client
 	redisOptions   *redis.Options
-	wg             sync.WaitGroup
-	stopChan       chan bool
+	lc             *lifecycle.Lifecycle // runs the notification loop once, stops it once
+	closeOnce      sync.Once
 	notifChan      chan jobbackendprovider.Event
 	ctx            context.Context
 	restoreFlag    bool // restoreFlag is a flag to indicate if the provider is in restore mode
@@ -75,17 +76,18 @@ func (p *RedisJobBackendProvider) Shutdown() {
 }
 
 func (p *RedisJobBackendProvider) Stop() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// send stop notification
-	p.stopChan <- true
-	// wait for the Run function to finish
-	p.wg.Wait()
-
-	// close redis client
-	if err := p.redisClient.Close(); err != nil {
-		p.logger.Error("Error closing Redis client", zap.Error(err))
+	// stop the loop, then close the client (once: Stop is called by the service and again
+	// by the observers shutdown)
+	p.lc.Stop()
+	var err error
+	p.closeOnce.Do(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if err = p.redisClient.Close(); err != nil {
+			p.logger.Error("Error closing Redis client", zap.Error(err))
+		}
+	})
+	if err != nil {
 		return err
 	}
 
@@ -382,7 +384,10 @@ func (p *RedisJobBackendProvider) NotifyChange(event jobbackendprovider.Event) {
 
 func (p *RedisJobBackendProvider) Run() error {
 	// this function must be called in a goroutine
-	p.wg.Add(1)
+	if !p.lc.Begin() {
+		return errors.New("provider is already running or stopped")
+	}
+	defer p.lc.End()
 
 	// listen to redis notifications
 	// https://redis.io/topics/notifications
@@ -410,8 +415,7 @@ func (p *RedisJobBackendProvider) Run() error {
 				}
 				fmt.Printf("New value for key %s: %s\n", key, value)
 			}
-		case <-p.stopChan:
-			p.wg.Done()
+		case <-p.lc.Stopping():
 			return nil
 		}
 	}
@@ -545,7 +549,7 @@ func NewRedisJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobbac
 		maxJobs:        conf.Backend.Redis.MaxJobs,
 		finishedJobTTL: uint(max(0, conf.Backend.Redis.FinishedJobTTL)),
 		redisOptions:   options,
-		stopChan:       make(chan bool, 1),
+		lc:             lifecycle.New(),
 		restoreFlag:    false,
 	}, nil
 }

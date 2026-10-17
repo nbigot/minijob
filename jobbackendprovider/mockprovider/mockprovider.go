@@ -11,6 +11,7 @@ import (
 	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
+	"github.com/nbigot/minijob/lifecycle"
 	"go.uber.org/zap"
 )
 
@@ -23,9 +24,7 @@ type MockJobBackendProvider struct {
 	jobs           job.JobMap                    // hashmap of jobs
 	maxJobs        uint                          // maxJobs is the maximum number of jobs that can be stored in the backend
 	writeFrequency int                           // writeFrequency is the frequency in seconds to write the jobs to the storage
-	running        atomic.Bool                   // Add this to track if the provider is running
-	wg             sync.WaitGroup                // wg is a wait group to wait for the Run function to finish
-	stopChan       chan bool                     // stopChan is a channel to stop the Run function
+	lc             *lifecycle.Lifecycle          // runs the save loop once, stops it once
 	notifChan      chan jobbackendprovider.Event // notifChan is a channel to send notifications to the service
 	restoreFlag    bool                          // restoreFlag is a flag to indicate if the provider is in restore mode
 }
@@ -43,14 +42,11 @@ func (p *MockJobBackendProvider) Shutdown() {
 }
 
 func (p *MockJobBackendProvider) Stop() error {
-	if !p.running.Load() {
-		return errors.New("provider is not running")
+	// stop the save loop (it saves the jobs before it returns); when it never ran, save
+	// them here
+	if !p.lc.Stop() {
+		return p.sync()
 	}
-
-	// send stop notification
-	p.stopChan <- true
-	// wait for the Run function to finish
-	p.wg.Wait()
 	return nil
 }
 
@@ -227,13 +223,10 @@ func (p *MockJobBackendProvider) NotifyChange(event jobbackendprovider.Event) {
 }
 
 func (p *MockJobBackendProvider) Run() error {
-	if !p.running.CompareAndSwap(false, true) {
-		return errors.New("provider is already running")
+	if !p.lc.Begin() {
+		return errors.New("provider is already running or stopped")
 	}
-	defer p.running.Store(false)
-
-	// this function must be called in a goroutine
-	p.wg.Add(1)
+	defer p.lc.End()
 
 	// create a ticker to save the jobs to the storage
 	ticker := time.NewTicker(time.Duration(p.writeFrequency) * time.Second)
@@ -243,12 +236,10 @@ func (p *MockJobBackendProvider) Run() error {
 		case <-ticker.C:
 			// save jobs to storage every writeFrequency seconds
 			_ = p.sync()
-		case <-p.stopChan:
+		case <-p.lc.Stopping():
 			// save jobs to storage before exiting
 			ticker.Stop()
-			err := p.sync()
-			p.wg.Done()
-			return err
+			return p.sync()
 		}
 	}
 }
@@ -325,7 +316,7 @@ func NewMockJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobback
 		logVerbosity:   4,
 		maxJobs:        100,
 		writeFrequency: 10,
-		stopChan:       make(chan bool, 1),
+		lc:             lifecycle.New(),
 		restoreFlag:    false,
 	}, nil
 }
