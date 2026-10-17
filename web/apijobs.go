@@ -277,7 +277,7 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 
 	// validate request body against the json schema
 	if w.appConfig.Jobs.JsonSchema.Enable {
-		keyErrors, err := w.schema.ValidateBytes(c.Context(), payload)
+		keyErrors, err := w.validateJSON(payload)
 		if err != nil {
 			apiErr := apierror.APIError{
 				Message:  "invalid json body format",

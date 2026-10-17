@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/gofiber/fiber/v2"
@@ -26,6 +28,7 @@ type WebAPIServer struct {
 	app                *fiber.App
 	appConfig          *config.Config
 	schema             jsonschema.Schema
+	schemaMu           sync.Mutex // serializes the validations (see validateJSON)
 }
 
 func (w *WebAPIServer) GetFiberPrometheus() *fiberprometheus.FiberPrometheus {
@@ -197,6 +200,29 @@ func (w *WebAPIServer) Init() error {
 		w.schema = jsonschema.Schema{}
 	}
 	return nil
+}
+
+// noFetchContext is already canceled: the validator would download remote "$ref" schemas
+// while answering a request; with this context such a download fails at once, like an
+// unreachable reference.
+var noFetchContext = func() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}()
+
+// validateJSON validates a request body against the schema. The validator changes the
+// schema and its global registry while it validates, so validations run one at a time.
+// The errors are sorted by field path (the validator's order changed from one request to
+// the next); errors on the same path keep their order.
+func (w *WebAPIServer) validateJSON(payload []byte) ([]jsonschema.KeyError, error) {
+	w.schemaMu.Lock()
+	keyErrors, err := w.schema.ValidateBytes(noFetchContext, payload)
+	w.schemaMu.Unlock()
+	sort.SliceStable(keyErrors, func(i, j int) bool {
+		return keyErrors[i].PropertyPath < keyErrors[j].PropertyPath
+	})
+	return keyErrors, err
 }
 
 var registerSchemaKeywordsOnce sync.Once
