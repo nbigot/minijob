@@ -143,25 +143,27 @@ func RunServer(appConfig *config.Config) (bool, error) {
 // @host 127.0.0.1:8080
 // @BasePath /
 func main() {
-	// 127.0.0.1:443
-	configFilePath := argparse()
+	os.Exit(run(argparse()))
+}
 
-	// start/restart the server forever (reason is reload config) unless an error occurs
+// run starts the server, and starts it again with a reloaded configuration when a restart
+// is requested. It returns the exit status: 0 after a normal stop, 1 after an error.
+func run(configFilePath string) int {
 	for {
-		var appConfig *config.Config
-		var err error
-		if appConfig, err = config.LoadConfig(configFilePath); err != nil {
+		appConfig, err := config.LoadConfig(configFilePath)
+		if err != nil {
 			fmt.Println(err)
-			os.Exit(1)
+			return 1
 		}
 
 		restartServer, serverErr := RunServer(appConfig)
-		if !restartServer || serverErr != nil {
-			log.Logger.Info("End program", zap.String("topic", "server"))
-			os.Exit(0)
-		}
 		if serverErr != nil {
-			os.Exit(1)
+			log.Logger.Info("End program", zap.String("topic", "server"))
+			return 1
+		}
+		if !restartServer {
+			log.Logger.Info("End program", zap.String("topic", "server"))
+			return 0
 		}
 	}
 }
