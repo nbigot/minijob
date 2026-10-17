@@ -22,7 +22,8 @@ type InMemoryJobBackendProvider struct {
 	logVerbosity            int                           // logVerbosity is the log verbosity level
 	mu                      sync.Mutex                    // mu is a mutex to protect the jobs hashmap
 	mapMutex                sync.RWMutex                  // mutex to protect hashmap of jobs
-	hasChanged              atomic.Bool                   // hasChanged is a flag to indicate if at least on job has changed
+	generation              atomic.Uint64                 // incremented on every change
+	savedGeneration         uint64                        // generation of the last save (protected by mu)
 	jobs                    job.JobMap                    // hashmap of jobs
 	maxJobs                 uint                          // maxJobs is the maximum number of jobs that can be stored in the backend
 	writeFrequency          int                           // writeFrequency is the frequency in seconds to write the jobs to the storage
@@ -55,7 +56,7 @@ func (p *InMemoryJobBackendProvider) Stop() error {
 	// stop the save loop (it saves the jobs before it returns); when it never ran, save
 	// them here
 	if !p.lc.Stop() {
-		return p.sync()
+		return p.SaveToFile()
 	}
 	return nil
 }
@@ -86,19 +87,19 @@ func (p *InMemoryJobBackendProvider) LoadJobs() (job.JobMap, error) {
 		if err != nil {
 			return nil, err
 		}
-		// make a copy of the jobs
-		// this is to prevent the caller from modifying the jobs hashmap
+		// the caller gets its own copies of the jobs: it changes them while this
+		// provider saves its copies
 		jobsCopy := make(job.JobMap)
 		p.mapMutex.RLock()
 		for k, v := range p.jobs {
-			jobsCopy[k] = v
+			jobsCopy[k] = v.Snapshot()
 		}
 		p.mapMutex.RUnlock()
-		p.hasChanged.Store(false)
+		p.savedGeneration = p.generation.Load()
 		return jobsCopy, nil
 	}
 
-	p.hasChanged.Store(false)
+	p.savedGeneration = p.generation.Load()
 	p.mapMutex.Lock()
 	p.jobs = make(job.JobMap)
 	p.mapMutex.Unlock()
@@ -115,9 +116,27 @@ func (p *InMemoryJobBackendProvider) SaveToFile() error {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.saveLocked()
+}
+
+// saveLocked writes the jobs (p.mu held). The stored jobs are copies that are replaced, not
+// changed: the map is copied under its lock and serialized without blocking the service.
+func (p *InMemoryJobBackendProvider) saveLocked() error {
+	generation := p.generation.Load()
+	if testHookBeforeSave != nil {
+		testHookBeforeSave()
+	}
 	p.mapMutex.RLock()
-	defer p.mapMutex.RUnlock()
-	return p.storage.Save(p.jobs)
+	jobs := make(job.JobMap, len(p.jobs))
+	for k, v := range p.jobs {
+		jobs[k] = v
+	}
+	p.mapMutex.RUnlock()
+	if err := p.storage.Save(jobs); err != nil {
+		return err
+	}
+	p.savedGeneration = generation
+	return nil
 }
 
 func (p *InMemoryJobBackendProvider) OnJobCreated(j *job.Job) error {
@@ -222,7 +241,7 @@ func (p *InMemoryJobBackendProvider) NotifyChange(event jobbackendprovider.Event
 		)
 	}
 
-	p.hasChanged.Store(true)
+	p.generation.Add(1)
 	// informational only: never block the caller (the service holds its lock)
 	select {
 	case p.notifChan <- event:
@@ -245,29 +264,25 @@ func (p *InMemoryJobBackendProvider) Run() error {
 			// save jobs to storage every writeFrequency seconds
 			_ = p.sync()
 		case <-p.lc.Stopping():
-			// save jobs to storage before exiting
+			// save jobs to storage before exiting (always)
 			ticker.Stop()
-			return p.sync()
+			return p.SaveToFile()
 		}
 	}
 }
 
+// sync saves the jobs when they changed since the last save. A change made during a save
+// increments the generation again, so it is saved the next time.
 func (p *InMemoryJobBackendProvider) sync() error {
-	// Check if there are changes to be synchronized
-	if !p.hasChanged.Load() {
+	if !p.enablePersistentStorage {
 		return nil
 	}
-
-	// If persistent storage is enabled, save changes to file
-	if p.enablePersistentStorage {
-		if err := p.SaveToFile(); err != nil {
-			return err
-		}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.generation.Load() == p.savedGeneration {
+		return nil
 	}
-
-	// Reset the change flag after synchronization
-	p.hasChanged.Store(false)
-	return nil
+	return p.saveLocked()
 }
 
 func (p *InMemoryJobBackendProvider) Healthcheck() bool {
@@ -454,8 +469,10 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 		writeFrequency:          writeFrequency,
 		enablePersistentStorage: conf.Backend.InMemory.EnablePersistentStorage,
 		storage:                 NewDBFileStorage(logger, conf.Backend.InMemory.Directory, conf.Backend.InMemory.Filename),
-		hasChanged:              atomic.Bool{},
 		lc:                      lifecycle.New(),
 		restoreFlag:             false,
 	}, nil
 }
+
+// testHookBeforeSave runs in sync after the changes to save are counted (tests only).
+var testHookBeforeSave func()
