@@ -73,6 +73,8 @@ func (t ServiceEventType) String() string {
 		return "Canceled"
 	case ServiceEventJobFailed:
 		return "Failed"
+	case ServiceEventJobHidden:
+		return "Hidden"
 	case ServiceEventJobDeleted:
 		return "Deleted"
 	case ServiceEventJobTimeout:

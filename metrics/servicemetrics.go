@@ -187,25 +187,25 @@ func (s *ServiceMetrics) OnJobStateChange(previousState job.JobState, newState j
 
 	switch previousState {
 	case job.JobCreated:
-		jobMetrics.JobsStatusCreated--
+		decrement(&jobMetrics.JobsStatusCreated)
 	case job.JobDelayed:
-		jobMetrics.JobsStatusDelayed--
+		decrement(&jobMetrics.JobsStatusDelayed)
 	case job.JobPending:
-		jobMetrics.JobsStatusPending--
+		decrement(&jobMetrics.JobsStatusPending)
 	case job.JobQueued:
-		jobMetrics.JobsStatusQueued--
+		decrement(&jobMetrics.JobsStatusQueued)
 	case job.JobRunning:
-		jobMetrics.JobsStatusRunning--
+		decrement(&jobMetrics.JobsStatusRunning)
 	case job.JobSucceeded:
-		jobMetrics.JobsStatusSucceeded--
+		decrement(&jobMetrics.JobsStatusSucceeded)
 	case job.JobFailed:
-		jobMetrics.JobsStatusFailed--
+		decrement(&jobMetrics.JobsStatusFailed)
 	case job.JobHidden:
-		jobMetrics.JobsStatusHidden--
+		decrement(&jobMetrics.JobsStatusHidden)
 	case job.JobDeleted:
-		jobMetrics.JobsCounterDeleted--
+		decrement(&jobMetrics.JobsCounterDeleted)
 	case job.JobCanceled:
-		jobMetrics.JobsStatusCanceled--
+		decrement(&jobMetrics.JobsStatusCanceled)
 	}
 
 	switch newState {
@@ -229,7 +229,7 @@ func (s *ServiceMetrics) OnJobStateChange(previousState job.JobState, newState j
 	case job.JobCanceled:
 		jobMetrics.JobsStatusCanceled++
 	case job.JobDeleted:
-		jobMetrics.JobsExisting--
+		decrement(&jobMetrics.JobsExisting)
 		jobMetrics.JobsCounterDeleted++
 	}
 }
@@ -273,6 +273,10 @@ func (s *ServiceMetrics) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 
 	previousState := j.GetPreviousState()
 	newState := j.GetState()
+	if ev == event.ServiceEventJobDeleted {
+		// the DELETE event has no state of its own: the job leaves the counters
+		newState = job.JobDeleted
+	}
 	jobMetrics := s.GetMetricByTopic(j.Topic)
 	s.OnJobStateChange(previousState, newState, jobMetrics)
 
@@ -297,8 +301,9 @@ func (s *ServiceMetrics) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 				}
 				s.ResourceMetricsMap.Store(resource, resourceMetrics)
 			}
-		case job.JobSucceeded, job.JobFailed, job.JobCanceled, job.JobDeleted:
-			// If the job is completed and had locked resources, remove the resource metrics
+		case job.JobSucceeded, job.JobFailed, job.JobCanceled, job.JobDeleted, job.JobHidden:
+			// If the job is completed (or hidden until a retry) and had locked resources,
+			// remove the resource metrics
 			for _, resource := range j.LockResources {
 				// By security check if the resource exists in the map and is locked by this job
 				if resourceMetrics, ok := s.ResourceMetricsMap.Load(resource); ok {
@@ -333,6 +338,14 @@ func (s *ServiceMetrics) UpdateMetricsFromJobHistory(j *job.Job) {
 		previousState = newState
 	}
 
+	// A loaded job counts in the topic statistics like a created one
+	topicMetrics := s.GetTopicMetrics(j.Topic)
+	topicMetrics.TotalJobs++
+	switch j.GetState() {
+	case job.JobPending, job.JobQueued, job.JobRunning:
+		topicMetrics.ActiveJobs++
+	}
+
 	// Update metrics (ResourceMetricsMap) for resources locked by the job
 	// Fisrt check if the jobs state is complient with resource locking state
 	jobState := j.GetState()
@@ -362,6 +375,13 @@ func (s *ServiceMetrics) OnDeleteAllJobs() {
 		numberOfDeletedJobs := jobMetrics.JobsCounterDeleted + jobMetrics.JobsExisting
 		jobMetrics.Clear()
 		jobMetrics.JobsCounterDeleted = numberOfDeletedJobs
+		return true
+	})
+	s.TopicMetricsByTopicMap.Range(func(key, value interface{}) bool {
+		topicMetrics := value.(*TopicMetrics)
+		topicMetrics.TotalJobs = 0
+		topicMetrics.ActiveJobs = 0
+		topicMetrics.SuccessRate = 0
 		return true
 	})
 
@@ -427,7 +447,11 @@ func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int)
 	}
 	jobMetrics := s.GetMetricByTopic(topic)
 	if inc < 0 {
-		jobMetrics.ResourcesLockedCount -= uint(inc)
+		if uint(-inc) >= jobMetrics.ResourcesLockedCount {
+			jobMetrics.ResourcesLockedCount = 0
+		} else {
+			jobMetrics.ResourcesLockedCount -= uint(-inc)
+		}
 	} else {
 		jobMetrics.ResourcesLockedCount += uint(inc)
 	}
@@ -480,7 +504,7 @@ func (s *ServiceMetrics) UpdateJobStatistics(jm job.JobMap) {
 	now := time.Now().UnixMilli()
 	for _, job := range jm {
 		if !job.IsCompleted() {
-			durationSeconds := float64(now - job.GetCreationTimestamp())
+			durationSeconds := float64(now-job.GetCreationTimestamp()) / 1000.0
 			s.Metrics.JobActiveDurationHistogram.WithLabelValues(job.Topic).Observe(durationSeconds)
 		}
 	}
@@ -577,7 +601,7 @@ func (s *ServiceMetrics) UpdateTopicMetrics(topic string, previousState job.JobS
 	// Update active jobs count
 	switch previousState {
 	case job.JobPending, job.JobQueued, job.JobRunning:
-		topicMetrics.ActiveJobs--
+		decrement(&topicMetrics.ActiveJobs)
 	}
 
 	switch newState {
@@ -586,7 +610,7 @@ func (s *ServiceMetrics) UpdateTopicMetrics(topic string, previousState job.JobS
 	case job.JobCreated:
 		topicMetrics.TotalJobs++
 	case job.JobDeleted:
-		topicMetrics.TotalJobs--
+		decrement(&topicMetrics.TotalJobs)
 	}
 
 	// Update completed job stats if job just completed
@@ -631,4 +655,41 @@ func NewServiceMetrics(enabledCollect bool) *ServiceMetrics {
 		enabledCollect:            enabledCollect,
 		Metrics:                   PrometheusMetrics{},
 	}
+}
+
+// decrement subtracts 1 without going below 0 (the counters are unsigned).
+func decrement(v *uint) {
+	if *v > 0 {
+		*v--
+	}
+}
+
+// OnUnlockAllResources is called when every resource lock is released by the admin
+// endpoint: no resource is locked anymore.
+func (s *ServiceMetrics) OnUnlockAllResources() {
+	if !s.enabledCollect {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ResourceMetricsMap = sync.Map{}
+	s.JobMetricsByTopicMap.Range(func(key, value interface{}) bool {
+		jobMetrics := value.(*JobMetrics)
+		jobMetrics.mu.Lock()
+		jobMetrics.ResourcesLockedCount = 0
+		jobMetrics.mu.Unlock()
+		return true
+	})
+}
+
+// OnResourceUnlocked is called when one resource lock, held by a job of the topic, is
+// released by the admin endpoint.
+func (s *ServiceMetrics) OnResourceUnlocked(resource string, topic string) {
+	if !s.enabledCollect {
+		return
+	}
+	s.mu.Lock()
+	s.ResourceMetricsMap.Delete(resource)
+	s.mu.Unlock()
+	s.UpdateResourcesLockedCountMetric(topic, -1)
 }

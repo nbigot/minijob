@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
 	"github.com/stretchr/testify/assert"
@@ -114,7 +116,11 @@ func TestServiceMetrics_UpdateResourcesLockedCountMetric(t *testing.T) {
 
 	// Decrease by 2
 	serviceMetrics.UpdateResourcesLockedCountMetric(topic, -2)
-	assert.Equal(t, uint(7), jobMetrics.ResourcesLockedCount)
+	assert.Equal(t, uint(3), jobMetrics.ResourcesLockedCount)
+
+	// Never below 0
+	serviceMetrics.UpdateResourcesLockedCountMetric(topic, -10)
+	assert.Equal(t, uint(0), jobMetrics.ResourcesLockedCount)
 }
 
 func TestServiceMetrics_NotifyEvent(t *testing.T) {
@@ -1222,4 +1228,113 @@ func TestServiceMetrics_UpdateJobStatistics_UnknownTopic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		serviceMetrics.UpdateJobStatistics(job.JobMap{jobUUID: j})
 	})
+}
+
+// newJobWithEvents creates a job and notifies one event per history event.
+func newJobWithEvents(s *ServiceMetrics, topic string, resources []string, events ...string) *job.Job {
+	id, _ := uuid.NewV7()
+	j := &job.Job{JobUUID: id, Topic: topic, LockResources: resources}
+	now := time.Now().UnixMilli() - 10_000
+	j.Init(id, now)
+	s.NotifyJobEvent(j, event.ServiceEventJobCreated)
+	evOf := map[string]event.ServiceEventType{
+		job.JobEventPending: event.ServiceEventJobPending,
+		job.JobEventEnqueue: event.ServiceEventJobEnqueued,
+		job.JobEventStart:   event.ServiceEventJobStarted,
+		job.JobEventSuccess: event.ServiceEventJobSucceeded,
+		job.JobEventHide:    event.ServiceEventJobHidden,
+		job.JobEventDelete:  event.ServiceEventJobDeleted,
+	}
+	for i, e := range events {
+		j.AddHistoryEvent(e, now+int64(i+1)*1000)
+		s.NotifyJobEvent(j, evOf[e])
+	}
+	return j
+}
+
+func TestServiceMetrics_DeleteIsCounted(t *testing.T) {
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	newJobWithEvents(s, "t", []string{"r1"}, job.JobEventPending, job.JobEventEnqueue, job.JobEventDelete)
+
+	m := s.GetMetricByTopic("t")
+	assert.Equal(t, uint(0), m.JobsExisting)
+	assert.Equal(t, uint(1), m.JobsCounterDeleted)
+	assert.Equal(t, uint(0), m.JobsStatusQueued)
+	stats := s.GetTopicsStats()
+	require.Len(t, stats, 1)
+	assert.Equal(t, uint(0), stats[0].TotalJobs)
+	assert.Equal(t, uint(0), stats[0].ActiveJobs)
+	assert.Empty(t, s.GetResourcesMetrics(), "the resources of a deleted job are not locked")
+	assert.Equal(t, uint64(1), s.GetJobActivityMetrics().Deleted)
+}
+
+func TestServiceMetrics_LoadedJobsInTopicStats(t *testing.T) {
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	id, _ := uuid.NewV7()
+	j := &job.Job{JobUUID: id, Topic: "t"}
+	j.Init(id, 1000)
+	j.AddHistoryEvent(job.JobEventPending, 1001)
+	j.AddHistoryEvent(job.JobEventEnqueue, 1002)
+	j.AddHistoryEvent(job.JobEventStart, 1003)
+	s.NotifyJobEvent(j, event.ServiceEventJobLoaded)
+
+	stats := s.GetTopicsStats()
+	require.Len(t, stats, 1)
+	assert.Equal(t, uint(1), stats[0].TotalJobs)
+	assert.Equal(t, uint(1), stats[0].ActiveJobs)
+
+	// Completing the loaded job does not wrap the active count around.
+	j.AddHistoryEvent(job.JobEventSuccess, 2003)
+	s.NotifyJobEvent(j, event.ServiceEventJobSucceeded)
+	stats = s.GetTopicsStats()
+	assert.Equal(t, uint(0), stats[0].ActiveJobs)
+}
+
+func TestServiceMetrics_HiddenEvent(t *testing.T) {
+	assert.Equal(t, "Hidden", event.ServiceEventJobHidden.String())
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	newJobWithEvents(s, "t", []string{"r1"}, job.JobEventPending, job.JobEventEnqueue, job.JobEventStart, job.JobEventHide)
+	assert.Equal(t, uint64(1), s.GetJobActivityMetrics().Hidden)
+	assert.Empty(t, s.GetResourcesMetrics(), "a hidden job waiting for a retry holds no resource")
+}
+
+func TestServiceMetrics_DeleteAllResetsTopicStats(t *testing.T) {
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	newJobWithEvents(s, "t", nil, job.JobEventPending, job.JobEventEnqueue)
+	s.NotifyEvent(event.ServiceEventJobDeletedAll)
+	stats := s.GetTopicsStats()
+	require.Len(t, stats, 1)
+	assert.Equal(t, uint(0), stats[0].TotalJobs)
+	assert.Equal(t, uint(0), stats[0].ActiveJobs)
+}
+
+func TestServiceMetrics_UnlockedResources(t *testing.T) {
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	newJobWithEvents(s, "t", []string{"r1", "r2"}, job.JobEventPending, job.JobEventEnqueue)
+	s.UpdateResourcesLockedCountMetric("t", 2)
+	s.OnResourceUnlocked("r1", "t")
+	assert.Equal(t, uint(1), s.GetMetricByTopic("t").ResourcesLockedCount)
+	require.Len(t, s.GetResourcesMetrics(), 1)
+	s.OnUnlockAllResources()
+	assert.Equal(t, uint(0), s.GetMetricByTopic("t").ResourcesLockedCount)
+	assert.Empty(t, s.GetResourcesMetrics())
+}
+
+func TestServiceMetrics_ActiveDurationInSeconds(t *testing.T) {
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	id, _ := uuid.NewV7()
+	j := &job.Job{JobUUID: id, Topic: "t"}
+	j.Init(id, time.Now().UnixMilli()-100_000) // created 100 s ago
+	s.NotifyJobEvent(j, event.ServiceEventJobCreated)
+	s.UpdateJobStatistics(job.JobMap{id: j})
+
+	pb := &dto.Metric{}
+	require.NoError(t, s.Metrics.JobActiveDurationHistogram.WithLabelValues("t").(prometheus.Histogram).Write(pb))
+	assert.InDelta(t, 100.0, pb.GetHistogram().GetSampleSum(), 5.0)
 }
