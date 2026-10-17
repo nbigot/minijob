@@ -376,3 +376,26 @@ func TestDuplicateResourceNames(t *testing.T) {
 	require.NoError(t, svc.SetJobAsSuccessful(a))
 	assert.Empty(t, svc.GetLockedResources())
 }
+
+func TestCreatedJobIsScheduledAfterLoad(t *testing.T) {
+	// A job saved between its creation and its first scheduling (only a CREATE event).
+	dir := t.TempDir()
+	ids := sequentialIDs(2)
+	now := time.Now().UnixMilli()
+	ready := &job.Job{Topic: "t", JobProperties: job.JobProperties{}}
+	ready.Init(ids[0], now)
+	later := &job.Job{Topic: "t", JobProperties: job.JobProperties{}, StartAfter: now + 3_600_000}
+	later.Init(ids[1], now)
+	data, err := json.Marshal(map[string]interface{}{"jobs": map[string]*job.Job{
+		ids[0].String(): ready,
+		ids[1].String(): later,
+	}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "jobs.json"), data, 0o600))
+
+	svc, err := CreateAndInitService(persistentConfig(t, dir), "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Stop() })
+	assert.Equal(t, job.JobQueued, stateOf(t, svc, ids[0]))
+	assert.Equal(t, job.JobDelayed, stateOf(t, svc, ids[1]))
+}
