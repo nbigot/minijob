@@ -78,11 +78,12 @@ func (s *DBFileStorage) Load() (job.JobMap, error) {
 }
 
 func (s *DBFileStorage) Save(jobs job.JobMap) error {
-	// save file to disk
+	// save file to disk (an error is reported to the caller, which keeps running)
 	fullfilepath := s.GetFilePath()
 	obj := DBStorageFileStruct{Jobs: jobs}
-	if sJson, err := json.Marshal(obj); err != nil {
-		s.logger.Fatal(
+	sJson, err := json.Marshal(obj)
+	if err != nil {
+		s.logger.Error(
 			"Can't serialize json",
 			zap.String("topic", "DBFileStorage"),
 			zap.String("method", "Save"),
@@ -90,20 +91,43 @@ func (s *DBFileStorage) Save(jobs job.JobMap) error {
 			zap.Error(err),
 		)
 		return err
-	} else {
-		if err := os.WriteFile(fullfilepath, sJson, 0644); err != nil {
-			s.logger.Fatal(
-				"Can't save json to file",
-				zap.String("topic", "DBFileStorage"),
-				zap.String("method", "Save"),
-				zap.String("filename", fullfilepath),
-				zap.Error(err),
-			)
-			return err
-		}
 	}
-
+	if err := writeFileAtomic(fullfilepath, sJson); err != nil {
+		s.logger.Error(
+			"Can't save json to file",
+			zap.String("topic", "DBFileStorage"),
+			zap.String("method", "Save"),
+			zap.String("filename", fullfilepath),
+			zap.Error(err),
+		)
+		return err
+	}
 	return nil
+}
+
+// writeFileAtomic replaces the file with data: it writes a temporary file in the same
+// directory, flushes it to disk and renames it, so that a crash during the write leaves
+// the previous file complete.
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 func (s *DBFileStorage) GetFilePath() string {
