@@ -19,7 +19,7 @@ type MockJobBackendProvider struct {
 	logger         *zap.Logger                   // logger is the logger
 	logVerbosity   int                           // logVerbosity is the log verbosity level
 	mu             sync.Mutex                    // mu is a mutex to protect the jobs hashmap
-	hasChanged     bool                          // hasChanged is a flag to indicate if at least on job has changed
+	hasChanged     atomic.Bool                   // hasChanged is a flag to indicate if at least on job has changed
 	jobs           job.JobMap                    // hashmap of jobs
 	maxJobs        uint                          // maxJobs is the maximum number of jobs that can be stored in the backend
 	writeFrequency int                           // writeFrequency is the frequency in seconds to write the jobs to the storage
@@ -73,7 +73,7 @@ func (p *MockJobBackendProvider) LoadJobs() (job.JobMap, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.hasChanged = false
+	p.hasChanged.Store(false)
 	p.jobs = make(job.JobMap)
 	// make a copy of the jobs (even if it's empty)
 	// this is to prevent the caller from modifying the jobs hashmap
@@ -218,8 +218,12 @@ func (p *MockJobBackendProvider) NotifyChange(event jobbackendprovider.Event) {
 		)
 	}
 
-	p.hasChanged = true
-	p.notifChan <- event
+	p.hasChanged.Store(true)
+	// informational only: never block the caller (the service holds its lock)
+	select {
+	case p.notifChan <- event:
+	default:
+	}
 }
 
 func (p *MockJobBackendProvider) Run() error {
@@ -242,7 +246,6 @@ func (p *MockJobBackendProvider) Run() error {
 		case <-p.stopChan:
 			// save jobs to storage before exiting
 			ticker.Stop()
-			close(p.notifChan)
 			err := p.sync()
 			p.wg.Done()
 			return err
@@ -251,8 +254,8 @@ func (p *MockJobBackendProvider) Run() error {
 }
 
 func (p *MockJobBackendProvider) sync() error {
-	if p.hasChanged {
-		p.hasChanged = false
+	if p.hasChanged.Load() {
+		p.hasChanged.Store(false)
 	}
 
 	return nil
@@ -322,7 +325,6 @@ func NewMockJobBackendProvider(logger *zap.Logger, conf *config.Config) (jobback
 		logVerbosity:   4,
 		maxJobs:        100,
 		writeFrequency: 10,
-		hasChanged:     false,
 		stopChan:       make(chan bool, 1),
 		restoreFlag:    false,
 	}, nil

@@ -10,7 +10,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nbigot/minijob/config"
@@ -114,4 +116,126 @@ func TestTopicsAfterLoadInCreationOrder(t *testing.T) {
 	svc, err := CreateAndInitService(persistentConfig(t, dir), "test")
 	require.NoError(t, err)
 	assert.Equal(t, topics, svc.GetTopics())
+}
+
+// runningService starts the service on the load test template (in memory, no file).
+func runningService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := CreateAndInitService(testConfig(t), "test")
+	require.NoError(t, err)
+	go func() { _ = svc.Run() }()
+	t.Cleanup(func() { _ = svc.Stop() })
+	return svc
+}
+
+func TestConcurrentCompletionsOfOneJob(t *testing.T) {
+	// A running job completed by several workers at the same time is completed once.
+	svc := runningService(t)
+	const jobs = 100
+	for i := 0; i < jobs; i++ {
+		_, err := svc.CreateJob([]byte(`{"topic":"once","properties":{}}`))
+		require.NoError(t, err)
+	}
+	require.Eventually(t, func() bool {
+		res, _ := svc.GetJobs(&GetJobsRequest{Page: 1, Limit: 1, Status: "queued", Topic: "once"})
+		return res.Total == jobs
+	}, 5*time.Second, 10*time.Millisecond)
+	res, err := svc.PullJobs(&RequestPullJobs{Topic: "once", NumJobs: jobs, VisibilityTimeout: 60})
+	require.NoError(t, err)
+	require.Len(t, res.Jobs, jobs)
+
+	var successes atomic.Int64
+	var wg sync.WaitGroup
+	for _, j := range res.Jobs {
+		id := j.JobUUID
+		for k := 0; k < 4; k++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var err error
+				if k%2 == 0 {
+					err = svc.SetJobAsSuccessful(id)
+				} else {
+					_, err = svc.FailJob(id)
+				}
+				if err == nil {
+					successes.Add(1)
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	assert.Equal(t, int64(jobs), successes.Load(), "each running job is completed exactly once")
+}
+
+func TestMixedLoad(t *testing.T) {
+	// Creations, pulls, completions, reads and deletions at the same time. Run with -race:
+	// the scheduler state and the jobs are only changed under the service lock.
+	svc := runningService(t)
+	stop := time.Now().Add(1500 * time.Millisecond)
+	var wg sync.WaitGroup
+	worker := func(f func(i int)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; time.Now().Before(stop); i++ {
+				f(i)
+			}
+		}()
+	}
+	for p := 0; p < 4; p++ {
+		worker(func(i int) {
+			body := fmt.Sprintf(`{"topic":"mixed","priority":%d,"properties":{"i":%d},"lockResources":["r%d"]}`, i%3, i, i%7)
+			_, _ = svc.CreateJob([]byte(body))
+		})
+	}
+	for w := 0; w < 4; w++ {
+		worker(func(i int) {
+			res, err := svc.PullJobs(&RequestPullJobs{Topic: "mixed", NumJobs: 3, VisibilityTimeout: 1})
+			if err != nil {
+				return
+			}
+			for k, j := range res.Jobs {
+				switch (i + k) % 4 {
+				case 0:
+					_ = svc.SetJobAsSuccessful(j.JobUUID)
+				case 1:
+					_, _ = svc.FailJob(j.JobUUID)
+				case 2:
+					_ = svc.CancelJob(j.JobUUID)
+				default:
+					_ = svc.DeleteJob(j.JobUUID)
+				}
+			}
+		})
+	}
+	worker(func(int) {
+		_, _ = svc.GetJobs(&GetJobsRequest{Page: 1, Limit: 50, Sort: "priority_desc"})
+		for _, j := range svc.GetAllJobs() {
+			_, _ = json.Marshal(j)
+		}
+		_ = svc.GetLockedResources()
+		_ = svc.GetTopics()
+	})
+	worker(func(int) {
+		svc.CheckJobsVisibilityTimeout()
+		svc.AttemptJobRetries()
+		svc.TryEnqueuePendingJobs()
+		time.Sleep(10 * time.Millisecond)
+	})
+	wg.Wait()
+
+	all := svc.GetAllJobs()
+	assert.Equal(t, uint(len(all)), svc.GetJobsCount())
+	// Every locked resource belongs to a queued or running job.
+	byID := map[job.JobUUID]*job.Job{}
+	for _, j := range all {
+		byID[j.JobUUID] = j
+	}
+	for resource, owner := range svc.GetLockedResources() {
+		j := byID[owner]
+		if assert.NotNil(t, j, "resource %s is locked by an unknown job", resource) {
+			assert.Contains(t, []job.JobState{job.JobQueued, job.JobRunning}, j.GetState(), "resource %s", resource)
+		}
+	}
 }

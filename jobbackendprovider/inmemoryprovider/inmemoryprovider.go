@@ -131,7 +131,7 @@ func (p *InMemoryJobBackendProvider) OnJobCreated(j *job.Job) error {
 		return fmt.Errorf("cannot create job, max limit reached: %d", p.maxJobs)
 	}
 
-	p.jobs[j.JobUUID] = j
+	p.jobs[j.JobUUID] = j.Snapshot()
 	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobCreated, JobUUID: j.JobUUID})
 	return nil
@@ -149,7 +149,7 @@ func (p *InMemoryJobBackendProvider) OnJobPending(j *job.Job) error {
 
 func (p *InMemoryJobBackendProvider) OnJobEnqueued(j *job.Job) error {
 	p.mapMutex.Lock()
-	p.jobs[j.JobUUID] = j
+	p.jobs[j.JobUUID] = j.Snapshot()
 	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobEnqueued, JobUUID: j.JobUUID})
 	return nil
@@ -227,7 +227,11 @@ func (p *InMemoryJobBackendProvider) NotifyChange(event jobbackendprovider.Event
 	}
 
 	p.hasChanged.Store(true)
-	p.notifChan <- event
+	// informational only: never block the caller (the service holds its lock)
+	select {
+	case p.notifChan <- event:
+	default:
+	}
 }
 
 func (p *InMemoryJobBackendProvider) Run() error {
@@ -252,7 +256,6 @@ func (p *InMemoryJobBackendProvider) Run() error {
 		case <-p.stopChan:
 			// save jobs to storage before exiting
 			ticker.Stop()
-			close(p.notifChan)
 			err := p.sync()
 			p.wg.Done()
 			return err
@@ -307,6 +310,16 @@ func (p *InMemoryJobBackendProvider) NotifyTopicEvent(ev event.ServiceEventType,
 func (p *InMemoryJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 	if p.restoreFlag {
 		return
+	}
+
+	// The jobs are saved by another goroutine: keep a copy of the job as it is now (the
+	// service changes the job itself under its own lock).
+	if ev != event.ServiceEventJobDeleted && ev != event.ServiceEventJobCreated {
+		p.mapMutex.Lock()
+		if _, known := p.jobs[j.JobUUID]; known {
+			p.jobs[j.JobUUID] = j.Snapshot()
+		}
+		p.mapMutex.Unlock()
 	}
 
 	switch ev {
