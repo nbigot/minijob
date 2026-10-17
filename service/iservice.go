@@ -22,6 +22,7 @@ type ResponsePullJobs struct {
 type IService interface {
 	Init() error
 	Stop() error
+	BeginShutdown()
 	Finalize() error
 	GetVersion() string
 	GetEnvironment() string

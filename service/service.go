@@ -21,6 +21,7 @@ import (
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider"
 	"github.com/nbigot/minijob/jobbackendprovider/registry"
+	"github.com/nbigot/minijob/lifecycle"
 	"github.com/nbigot/minijob/log"
 	"github.com/nbigot/minijob/metrics"
 	"github.com/nbigot/minijob/pq"
@@ -54,9 +55,10 @@ type Service struct {
 	metrics                    metrics.IServiceMetrics                // service to manage metrics
 	eventLogger                *eventlogger.EventLoggerObserver       // event logger
 	eventNotifier              event.IServiceEventNotifier            // service to manage events
-	wg                         sync.WaitGroup                         // wg is a wait group to wait for the Run function to finish
-	stopChan                   chan struct{}                          // stopChan is a channel to stop the Run function
-	running                    atomic.Bool                            // Add this to track if the service is running
+	lc                         *lifecycle.Lifecycle                   // runs the service loop once, stops it once
+	stopping                   chan struct{}                          // closed when the server starts stopping (ends the long polls)
+	stoppingOnce               sync.Once                              // closes stopping once
+	stopOnce                   sync.Once                              // runs Stop once
 	startTime                  time.Time                              // service start time
 	bp                         jobbackendprovider.IJobBackendProvider // backend provider
 	conf                       *config.Config                         // configuration
@@ -68,7 +70,6 @@ type Service struct {
 func (svc *Service) Init() error {
 	var err error
 
-	svc.running.Store(false)
 	svc.checkJobsRetentionRunning.Store(false)
 	svc.checkJobsVisibilityRunning.Store(false)
 	svc.checkJobsDelayRunning.Store(false)
@@ -590,7 +591,7 @@ func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
 		select {
 		case <-wake:
 		case <-timer.C:
-		case <-svc.stopChan:
+		case <-svc.stopping:
 			// the service stops: answer now
 			timer.Stop()
 			res, _, _, err := svc.pullJobsOnce(req, true)
@@ -1172,18 +1173,24 @@ func (svc *Service) Finalize() error {
 	return svc.Stop()
 }
 
-func (svc *Service) Stop() error {
-	if !svc.running.Load() {
-		// service is not running
-		return nil
-	}
+// BeginShutdown is called when the server starts stopping: the long polls return at once
+// (with their usual "no job" answer) instead of keeping the HTTP server open.
+func (svc *Service) BeginShutdown() {
+	svc.stoppingOnce.Do(func() { close(svc.stopping) })
+}
 
-	// send stop notification
-	close(svc.stopChan)
-	// wait for the Run function to finish
-	svc.wg.Wait()
-	// notify the observers that the service has stopped
-	svc.eventNotifier.Shutdown()
+// Stop stops the service loop and the backend (which saves the jobs), then the observers.
+// It can be called several times and from several goroutines.
+func (svc *Service) Stop() error {
+	svc.stopOnce.Do(func() {
+		svc.BeginShutdown()
+		if !svc.lc.Stop() {
+			// the service loop never ran: stop the backend here
+			_ = svc.bp.Stop()
+		}
+		// notify the observers that the service has stopped
+		svc.eventNotifier.Shutdown()
+	})
 	return nil
 }
 
@@ -1426,10 +1433,10 @@ func (svc *Service) GetBackendProvider() jobbackendprovider.IJobBackendProvider 
 }
 
 func (svc *Service) Run() error {
-	if !svc.running.CompareAndSwap(false, true) {
-		return errors.New("service is already running")
+	if !svc.lc.Begin() {
+		return errors.New("service is already running or stopped")
 	}
-	defer svc.running.Store(false)
+	defer svc.lc.End()
 
 	defer func() {
 		log.Logger.Info(
@@ -1438,10 +1445,6 @@ func (svc *Service) Run() error {
 			zap.String("method", "Run"),
 		)
 	}()
-
-	// this function must be called in a goroutine
-	svc.wg.Add(1)
-	defer svc.wg.Done()
 
 	log.Logger.Info(
 		"Service started",
@@ -1491,7 +1494,7 @@ func (svc *Service) Run() error {
 			svc.CheckJobsRetention()
 		case <-jobStatsTicker.C:
 			svc.UpdateJobStatistics()
-		case <-svc.stopChan:
+		case <-svc.lc.Stopping():
 			// Channel was closed, time to stop
 			// received a signal to stop the service
 			// stop the tickers
@@ -1597,7 +1600,8 @@ func NewService(logger *zap.Logger, conf *config.Config, version string) (*Servi
 		pqDelayedJobs:    *pq.NewPriorityQueue(jobEqual),
 		notifChanBP:      make(chan jobbackendprovider.Event, 1000),
 		queued:           make(chan struct{}),
-		stopChan:         make(chan struct{}),
+		lc:               lifecycle.New(),
+		stopping:         make(chan struct{}),
 		metrics:          metrics.NewServiceMetrics(conf.WebServer.Metrics.Enable),
 		callbackService:  callback.NewCallbackService(logger),
 		eventLogger:      eventlogger.NewEventLoggerObserver(conf.EventsLogger.FilePath),

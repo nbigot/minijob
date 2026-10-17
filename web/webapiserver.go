@@ -125,7 +125,8 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 }
 
 func (w *WebAPIServer) ShutdownServer() {
-	_ = w.service.Stop()
+	// the service is stopped after the HTTP server (see webserver.Server), so that the
+	// requests in progress can finish
 	w.funcShutdownServer()
 }
 

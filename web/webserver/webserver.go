@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	consul "github.com/hashicorp/consul/api"
@@ -43,6 +44,9 @@ type Server struct {
 type ServerOption func(*Server)
 
 var ErrRequestRestart = errors.New("ErrRequestRestart")
+
+// shutdownTimeout is how long the requests in progress have to finish when the server stops.
+const shutdownTimeout = 10 * time.Second
 
 func NewServer(logger *zap.Logger, fiberConfig fiber.Config, appConfig *config.Config, service service.IService) *Server {
 	return &Server{
@@ -260,7 +264,10 @@ func (s *Server) HandleSignals() error {
 
 func (s *Server) shutdownListener() {
 	s.logger.Info("Shutdown Server ...", zap.String("topic", "server"), zap.String("method", "shutdownListener"))
-	if err := s.GetApp().Shutdown(); err != nil {
+	// end the long polls, stop accepting connections and let the requests in progress
+	// finish (at most shutdownTimeout); the service is stopped afterwards
+	s.service.BeginShutdown()
+	if err := s.GetApp().ShutdownWithTimeout(shutdownTimeout); err != nil {
 		s.logger.Error("Server Shutdown", zap.String("topic", "server"), zap.String("method", "shutdownListener"), zap.Error(err))
 	}
 	s.logger.Info("Web server stopped", zap.String("topic", "server"), zap.String("method", "shutdownListener"))
