@@ -422,3 +422,18 @@ func deepCopyValue(v interface{}) interface{} {
 		return v
 	}
 }
+
+// Snapshot returns a copy of the job that later changes to j do not affect: the history and
+// the resource list are copied (the properties are never changed after the creation).
+func (j *Job) Snapshot() *Job {
+	c := *j
+	if j.History != nil {
+		c.History = make(JobHistory, len(j.History))
+		copy(c.History, j.History)
+	}
+	if j.LockResources != nil {
+		c.LockResources = make(ResourceList, len(j.LockResources))
+		copy(c.LockResources, j.LockResources)
+	}
+	return &c
+}

@@ -21,10 +21,14 @@ type CallbackPayload struct {
 	Job       *job.Job `json:"job"`       // Full job details
 }
 
+// maxConcurrentCallbacks is the number of callbacks sent at the same time; the others wait.
+const maxConcurrentCallbacks = 256
+
 // CallbackService handles job completion callbacks
 type CallbackService struct {
 	// Implements IServiceEventObserver interface
 	httpClient *http.Client
+	slots      chan struct{} // one per callback being sent
 	maxRetries int
 	retryDelay time.Duration
 	logger     *zap.Logger
@@ -52,9 +56,16 @@ func (cs *CallbackService) NotifyTopicEvent(ev event.ServiceEventType, topic str
 
 // NotifyJobEvent implements IServiceEventObserver interface
 func (cs *CallbackService) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
-	// Check if this is a job completion event and trigger callback if needed
+	// Only the transition into a final state sends a callback: not the other events of a
+	// completed job (loaded at startup, deleted...), which was already notified.
+	switch ev {
+	case event.ServiceEventJobSucceeded, event.ServiceEventJobCanceled, event.ServiceEventJobTerminated:
+	default:
+		return
+	}
 	if cs.ShouldTriggerCallback(j) {
-		cs.ExecuteCallbackAsync(j)
+		// the payload is the job as it is now (a canceled job is queued again right after)
+		cs.ExecuteCallbackAsync(j.Snapshot())
 	}
 }
 
@@ -88,6 +99,8 @@ func (cs *CallbackService) ExecuteCallback(job *job.Job) error {
 // ExecuteCallbackAsync sends the callback notification asynchronously
 func (cs *CallbackService) ExecuteCallbackAsync(job *job.Job) {
 	go func() {
+		cs.slots <- struct{}{}
+		defer func() { <-cs.slots }()
 		if err := cs.ExecuteCallback(job); err != nil {
 			if cs.logger != nil {
 				cs.logger.Error("Callback failed",
@@ -162,6 +175,7 @@ func NewCallbackService(logger *zap.Logger) *CallbackService {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		slots:      make(chan struct{}, maxConcurrentCallbacks),
 		maxRetries: 3,
 		retryDelay: 2 * time.Second,
 		logger:     logger,
