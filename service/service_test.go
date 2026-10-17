@@ -239,3 +239,60 @@ func TestMixedLoad(t *testing.T) {
 		}
 	}
 }
+
+func TestLongPollDoesNotBlockOtherPulls(t *testing.T) {
+	svc := runningService(t)
+	go func() {
+		_, _ = svc.PullJobs(&RequestPullJobs{Topic: "a", NumJobs: 1, VisibilityTimeout: 60, WaitTimeSeconds: 3})
+	}()
+	time.Sleep(100 * time.Millisecond) // the long poll is waiting
+	_, err := svc.CreateJob([]byte(`{"topic":"b","properties":{}}`))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		res, _ := svc.GetJobs(&GetJobsRequest{Page: 1, Limit: 1, Status: "queued", Topic: "b"})
+		return res.Total == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	start := time.Now()
+	res, err := svc.PullJobs(&RequestPullJobs{Topic: "b", NumJobs: 1, VisibilityTimeout: 60})
+	require.NoError(t, err)
+	assert.Len(t, res.Jobs, 1)
+	assert.Less(t, time.Since(start), 500*time.Millisecond, "another pull waited for the long poll")
+}
+
+func TestLongPollReturnsAsSoonAsAJobIsQueued(t *testing.T) {
+	svc := runningService(t)
+	type result struct {
+		res *ResponsePullJobs
+		err error
+		at  time.Time
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := svc.PullJobs(&RequestPullJobs{Topic: "c", NumJobs: 1, VisibilityTimeout: 60, WaitTimeSeconds: 10})
+		done <- result{res, err, time.Now()}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	created := time.Now()
+	_, err := svc.CreateJob([]byte(`{"topic":"c","properties":{}}`))
+	require.NoError(t, err)
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		assert.Len(t, r.res.Jobs, 1)
+		assert.Less(t, r.at.Sub(created), 300*time.Millisecond, "the long poll noticed the job late")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the long poll did not return")
+	}
+}
+
+func TestLongPollTimesOut(t *testing.T) {
+	svc := runningService(t)
+	start := time.Now()
+	_, err := svc.PullJobs(&RequestPullJobs{Topic: "none", NumJobs: 1, VisibilityTimeout: 60, WaitTimeSeconds: 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no jobs found in the queue")
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, time.Second)
+	assert.Less(t, elapsed, 2*time.Second)
+}
