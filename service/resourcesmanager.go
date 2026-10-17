@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/nbigot/minijob/job"
@@ -66,55 +65,44 @@ func (m *ResourcesManager) LockResourcesForJobs(jobs job.JobMap) {
 	}
 }
 
-func (m *ResourcesManager) LockResources(j *job.Job) error {
+// LockResources locks the resources of the job: all of them or none. A resource the job
+// already holds is kept, and a name listed twice is locked once. It returns how many
+// resources were newly locked.
+func (m *ResourcesManager) LockResources(j *job.Job) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if all the resources required by the job are free
-	if success, non_available_resource := m.areRequiredResourcesFree(j); !success {
-		// at least one of the resources is not available
-		return errors.New("resource not available: " + non_available_resource)
+	// Check if all the resources required by the job are free (or already held by it)
+	for _, r := range j.LockResources {
+		if owner, found := m.lockedResources[r]; found && owner != j.JobUUID {
+			return 0, errors.New("resource not available: " + r)
+		}
 	}
 
-	return m.lockResources(j)
+	acquired := 0
+	for _, r := range j.LockResources {
+		if _, found := m.lockedResources[r]; !found {
+			m.lockedResources[r] = j.JobUUID
+			acquired++
+		}
+	}
+	return acquired, nil
 }
 
-func (m *ResourcesManager) UnlockResources(j *job.Job) {
+// UnlockResources releases the resources held by the job; a resource locked by another job
+// is left alone. It returns the released resources.
+func (m *ResourcesManager) UnlockResources(j *job.Job) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Unlock the resources
+	var released []string
 	for _, r := range j.LockResources {
-		delete(m.lockedResources, r)
-	}
-}
-
-func (m *ResourcesManager) areRequiredResourcesFree(j *job.Job) (bool, string) {
-	// Check if the resources required by the job are free
-	for _, r := range j.LockResources {
-		if _, found := m.lockedResources[r]; found {
-			return false, r
+		if owner, found := m.lockedResources[r]; found && owner == j.JobUUID {
+			delete(m.lockedResources, r)
+			released = append(released, r)
 		}
 	}
-
-	return true, ""
-}
-
-func (m *ResourcesManager) lockResources(j *job.Job) error {
-	// Lock the resources
-	for _, r := range j.LockResources {
-		// safety test
-		if _, found := m.lockedResources[r]; found {
-			reason := fmt.Sprintf("Resource '%s' already locked by job id %s", r, j.JobUUID.String())
-			m.logger.Error(reason)
-			return errors.New(reason)
-		}
-
-		// lock the resource
-		m.lockedResources[r] = j.JobUUID
-	}
-
-	return nil
+	return released
 }
 
 func NewResourcesManager(logger *zap.Logger) *ResourcesManager {

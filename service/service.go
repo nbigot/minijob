@@ -315,6 +315,11 @@ func (svc *Service) AttemptJobRetries() {
 	// so the first job in the retry queue is not ready to be retried yet
 	// then the others are not ready too
 	minPriority := -time.Now().UnixMilli()
+	type blockedJob struct {
+		j        *job.Job
+		priority int64
+	}
+	var blocked []blockedJob
 	for {
 		// get the first job from the priority queue with priority >= minPriority
 		// here the priority is the retry time (negative value)
@@ -323,17 +328,22 @@ func (svc *Service) AttemptJobRetries() {
 			break
 		}
 		if err := svc.retryJobLocked(j); err != nil {
-			// the job cannot be retried
-			// so enqueue it back in the priority queue
-			svc.pqRetryJobs.Enqueue(j, priority)
-			// retry later
-			return
+			// the job cannot be retried yet (its resources are held by another job):
+			// it goes back in the queue, the other jobs are still retried
+			blocked = append(blocked, blockedJob{j, priority})
 		}
+	}
+	for _, b := range blocked {
+		svc.pqRetryJobs.Enqueue(b.j, b.priority)
 	}
 }
 
 func (svc *Service) retryJobLocked(j *job.Job) error {
-	// Retry the job immediately
+	// Retry the job immediately. Its resources were released if it waited in the retry
+	// queue: lock them again (the job waits there while another job holds them).
+	if apiError := svc.lockResourcesLocked(j); apiError != nil {
+		return apiError
+	}
 	now := time.Now().UnixMilli()
 
 	// Enqueue the job by adding a history event
@@ -357,7 +367,8 @@ func (svc *Service) retryJobLocked(j *job.Job) error {
 
 func (svc *Service) lockResourcesLocked(j *job.Job) *apierror.APIError {
 	// Lock the resources required by the job
-	if err := svc.resourcesManager.LockResources(j); err != nil {
+	acquired, err := svc.resourcesManager.LockResources(j)
+	if err != nil {
 		// the job is not ready to be enqueued
 		return &apierror.APIError{
 			Message:  "cannot enqueue job",
@@ -369,7 +380,9 @@ func (svc *Service) lockResourcesLocked(j *job.Job) *apierror.APIError {
 	}
 
 	// Update the resources locked count metric
-	svc.UpdateResourcesLockedCountMetric(j.Topic, len(j.LockResources)) // TODO
+	if acquired > 0 {
+		svc.UpdateResourcesLockedCountMetric(j.Topic, acquired)
+	}
 
 	return nil
 }
@@ -548,17 +561,16 @@ func (svc *Service) DeleteQueuedJobs() error {
 }
 
 func (svc *Service) unlockJobResourcesLocked(j *job.Job) {
-	cptJobLockResources := len(j.LockResources)
-	if cptJobLockResources == 0 {
+	// only the resources this job holds (another job may hold the same names)
+	released := svc.resourcesManager.UnlockResources(j)
+	if len(released) == 0 {
 		return
 	}
 
-	svc.resourcesManager.UnlockResources(j)
-
 	// Update the resources locked count metric
-	svc.UpdateResourcesLockedCountMetric(j.Topic, -cptJobLockResources)
+	svc.UpdateResourcesLockedCountMetric(j.Topic, -len(released))
 
-	for _, resource := range j.LockResources {
+	for _, resource := range released {
 		// notify the backend provider
 		if err := svc.bp.OnResourceUnlocked(j, resource); err != nil {
 			svc.logger.Error(
@@ -1543,9 +1555,9 @@ func (svc *Service) Run() error {
 }
 
 func requiresLockedResources(lockedResources job.LockedResources, job *job.Job) bool {
-	// Helper function to check if a job requires locked resources
+	// Helper function to check if a job requires resources locked by another job
 	for _, r := range job.LockResources {
-		if _, found := lockedResources[r]; found {
+		if owner, found := lockedResources[r]; found && owner != job.JobUUID {
 			return true
 		}
 	}
