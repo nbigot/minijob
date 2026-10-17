@@ -371,3 +371,21 @@ func TestJob_Init(t *testing.T) {
 	assert.Equal(t, JobCreated, j.state)
 	assert.Equal(t, JobNoState, j.previousState)
 }
+
+func TestJob_CloneDoesNotShareData(t *testing.T) {
+	original := &Job{
+		Topic:         "t",
+		JobProperties: JobProperties{"nested": map[string]interface{}{"a": 1.0}, "list": []interface{}{1.0, "x"}},
+		LockResources: ResourceList{"r1", "r2"},
+	}
+	original.Init(uuid.New(), 1)
+
+	clone := original.Clone()
+	clone.JobProperties["nested"].(map[string]interface{})["a"] = 2.0
+	clone.JobProperties["list"].([]interface{})[1] = "changed"
+	clone.JobProperties["added"] = true
+	clone.LockResources[0] = "other"
+
+	assert.Equal(t, JobProperties{"nested": map[string]interface{}{"a": 1.0}, "list": []interface{}{1.0, "x"}}, original.JobProperties)
+	assert.Equal(t, ResourceList{"r1", "r2"}, original.LockResources)
+}

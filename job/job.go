@@ -234,13 +234,22 @@ func (j *Job) GetCountFaillures() uint {
 }
 
 func (j *Job) Clone() *Job {
-	// Clone a job (except the JobUUID and History)
+	// Clone a job (except the JobUUID and History). The properties and the resources are
+	// copied: the clone must not share them with the original job.
+	var lockResources ResourceList
+	if j.LockResources != nil {
+		lockResources = append(ResourceList{}, j.LockResources...)
+	}
+	var properties JobProperties
+	if j.JobProperties != nil {
+		properties = deepCopyValue(j.JobProperties).(map[string]interface{})
+	}
 	return &Job{
 		Topic:             j.Topic,
 		Priority:          j.Priority,
-		JobProperties:     j.JobProperties,
+		JobProperties:     properties,
 		History:           make(JobHistory, 0),
-		LockResources:     j.LockResources,
+		LockResources:     lockResources,
 		UserAgent:         j.UserAgent,
 		Requester:         j.Requester,
 		Name:              j.Name,
@@ -391,5 +400,25 @@ func (j *Job) ToResponse() *JobResponse {
 		StartAfter:        j.StartAfter,
 		CallbackURL:       j.CallbackURL,
 		State:             j.GetStateString(),
+	}
+}
+
+// deepCopyValue copies a value decoded from JSON (maps, slices and scalars).
+func deepCopyValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		m := make(map[string]interface{}, len(t))
+		for k, e := range t {
+			m[k] = deepCopyValue(e)
+		}
+		return m
+	case []interface{}:
+		s := make([]interface{}, len(t))
+		for i, e := range t {
+			s[i] = deepCopyValue(e)
+		}
+		return s
+	default:
+		return v
 	}
 }
