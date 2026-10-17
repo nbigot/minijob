@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -260,9 +261,10 @@ func (w *WebAPIServer) GetJob(c *fiber.Ctx) error {
 func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 	c.Locals("metricName", "CreateJob")
 
-	// get request body as json string and ensure the header is application/json
+	// get request body as json string and ensure the media type is application/json
+	// (parameters such as "; charset=utf-8" are allowed)
 	ctype := utils.ToLower(utils.UnsafeString(c.Request().Header.ContentType()))
-	if ctype != "application/json" {
+	if mediaType, _, _ := strings.Cut(ctype, ";"); strings.TrimSpace(mediaType) != "application/json" {
 		apiErr := apierror.APIError{
 			Message:  "invalid content type (must be application/json)",
 			Code:     constants.ErrorInvalidContentType,
