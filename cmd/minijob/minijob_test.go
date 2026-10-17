@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 // TestMain runs the program itself when MINIJOB_RUN_MAIN is set, so that tests can check
@@ -254,5 +257,31 @@ func TestConfigurationErrorsExitWithoutPanic(t *testing.T) {
 				t.Fatalf("missing %q:\n%s", c.message, out)
 			}
 		})
+	}
+}
+
+func TestCorsWildcardOriginAfterASpace(t *testing.T) {
+	handler, err := newCors(corsConfig("https://a.com, https://*.b.com", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := fiber.New()
+	app.Use(handler)
+	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+	for origin, allowed := range map[string]bool{
+		"https://a.com":   true,
+		"https://x.b.com": true,
+		"https://c.com":   false,
+	} {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Origin", origin)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := resp.Header.Get("Access-Control-Allow-Origin")
+		if allowed && got != origin || !allowed && got != "" {
+			t.Errorf("origin %s: Access-Control-Allow-Origin %q", origin, got)
+		}
 	}
 }
