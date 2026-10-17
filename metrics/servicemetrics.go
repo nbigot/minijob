@@ -249,7 +249,9 @@ func (s *ServiceMetrics) NotifyTopicEvent(ev event.ServiceEventType, topic strin
 	}
 
 	if topic != "*" {
+		s.mu.Lock()
 		s.EnsureTopicExists(topic)
+		s.mu.Unlock()
 	}
 
 	switch ev {
@@ -412,7 +414,9 @@ func (s *ServiceMetrics) GetResourcesMetrics() []ResourceMetrics {
 }
 
 func (s *ServiceMetrics) GetTopics() []string {
-	return s.Topics
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string{}, s.Topics...)
 }
 
 func (s *ServiceMetrics) GetTopicsStats() []TopicMetrics {
@@ -445,7 +449,16 @@ func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int)
 	if !s.enabledCollect {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updateResourcesLockedCount(topic, inc)
+}
+
+// updateResourcesLockedCount is UpdateResourcesLockedCountMetric with s.mu held.
+func (s *ServiceMetrics) updateResourcesLockedCount(topic string, inc int) {
 	jobMetrics := s.GetMetricByTopic(topic)
+	jobMetrics.mu.Lock()
+	defer jobMetrics.mu.Unlock()
 	if inc < 0 {
 		if uint(-inc) >= jobMetrics.ResourcesLockedCount {
 			jobMetrics.ResourcesLockedCount = 0
@@ -472,7 +485,11 @@ func (s *ServiceMetrics) GetMetricByTopic(topic string) *JobMetrics {
 	return jobMetrics.(*JobMetrics)
 }
 
+// AddTopic registers a topic (the caller holds s.mu); an existing topic is not added again.
 func (s *ServiceMetrics) AddTopic(topic string) *JobMetrics {
+	if existing, ok := s.JobMetricsByTopicMap.Load(topic); ok {
+		return existing.(*JobMetrics)
+	}
 	jobMetrics := &JobMetrics{}
 	s.JobMetricsByTopicMap.Store(topic, jobMetrics)
 	s.Topics = append(s.Topics, topic)
@@ -689,7 +706,7 @@ func (s *ServiceMetrics) OnResourceUnlocked(resource string, topic string) {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.ResourceMetricsMap.Delete(resource)
-	s.mu.Unlock()
-	s.UpdateResourcesLockedCountMetric(topic, -1)
+	s.updateResourcesLockedCount(topic, -1)
 }
