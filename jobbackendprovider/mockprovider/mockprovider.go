@@ -179,6 +179,14 @@ func (p *MockJobBackendProvider) OnJobTimeout(j *job.Job) error {
 	return nil
 }
 
+func (p *MockJobBackendProvider) OnJobUpdated(j *job.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobUpdated, JobUUID: j.JobUUID})
+	return nil
+}
+
 func (p *MockJobBackendProvider) WaitWrites() {}
 
 func (p *MockJobBackendProvider) OnJobsDeleted() error {

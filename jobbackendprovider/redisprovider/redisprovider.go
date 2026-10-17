@@ -298,6 +298,15 @@ func (p *RedisJobBackendProvider) OnJobEnqueued(j *job.Job) error {
 	return p.SaveJob(j)
 }
 
+// OnJobUpdated saves a change that has no event of its own (visibility timeout). A completed
+// job is not saved again: a SET would remove the expiration of a succeeded job.
+func (p *RedisJobBackendProvider) OnJobUpdated(j *job.Job) error {
+	if j.IsCompleted() {
+		return nil
+	}
+	return p.SaveJob(j)
+}
+
 func (p *RedisJobBackendProvider) SaveJob(j *job.Job) error {
 	return p.saveJob(j, 0)
 }

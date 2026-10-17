@@ -160,6 +160,22 @@ func TestWaitWritesDuringAnOutageReturnsAfterOneAttempt(t *testing.T) {
 	require.NoError(t, m.Restart()) // the stop writes the job
 }
 
+func TestUpdateKeepsTheExpirationOfACompletedJob(t *testing.T) {
+	m := miniredis.RunT(t)
+	p := newTestProvider(t, m)
+	_, err := p.LoadJobs()
+	require.NoError(t, err)
+	j := newJob("t")
+	j.AddHistoryEvent(job.JobEventEnqueue, time.Now().UnixMilli())
+	j.AddHistoryEvent(job.JobEventStart, time.Now().UnixMilli())
+	j.AddHistoryEvent(job.JobEventSuccess, time.Now().UnixMilli())
+	p.NotifyJobEvent(j, event.ServiceEventJobSucceeded)
+	j.VisibilityTimeout = 300
+	require.NoError(t, p.OnJobUpdated(j))
+	p.WaitWrites()
+	assert.Equal(t, 60*time.Second, m.TTL(JobUUID2RedisKey(j.JobUUID)))
+}
+
 func TestJobExpiredSinceTheScanIsSkipped(t *testing.T) {
 	m := miniredis.RunT(t)
 	kept := newJob("t")
