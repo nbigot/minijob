@@ -120,8 +120,8 @@ func (w *WebAPIServer) AddRoutes(app *fiber.App) {
 		apiSwagger := app.Group("/docs")
 
 		// Routes for GET method:
-		apiSwagger.Get("*", swagger.HandlerDefault)
-		apiSwagger.Get("*", swagger.New(swagger.Config{
+		apiSwagger.Get("*", swaggerHandler())
+		apiSwagger.Get("*", swaggerHandler(swagger.Config{
 			URL:         "swagger.json",
 			DeepLinking: false,
 		}))

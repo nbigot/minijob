@@ -24,6 +24,12 @@ var registryOnce sync.Once
 // given replacements, and returns the Fiber app with every API route.
 func newTestServer(t *testing.T, replacements ...string) (*fiber.App, *service.Service) {
 	t.Helper()
+	return newTestServerWith(t, nil, replacements...)
+}
+
+// newTestServerWith is newTestServer with a hook that can add middlewares before the routes.
+func newTestServerWith(t *testing.T, before func(*fiber.App), replacements ...string) (*fiber.App, *service.Service) {
+	t.Helper()
 	registryOnce.Do(func() { require.NoError(t, registry.Initialize()) })
 	template, err := os.ReadFile(filepath.Join("..", "config-templates", "standard", "config", "config.loadtest.yaml"))
 	require.NoError(t, err)
@@ -40,6 +46,9 @@ func newTestServer(t *testing.T, replacements ...string) (*fiber.App, *service.S
 
 	w := NewWebAPIServer(conf, GetFiberConfig(), svc, func() {}, func() {})
 	require.NoError(t, w.Init())
+	if before != nil {
+		before(w.GetFiberApp())
+	}
 	w.AddRoutes(w.GetFiberApp())
 	return w.GetFiberApp(), svc
 }
