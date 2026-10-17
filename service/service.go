@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
+	"cmp"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -135,7 +138,9 @@ func (svc *Service) LoadJobs() error {
 	svc.bp.SetRestoreFlag(true)
 	svc.pendingJobs = make(job.JobMap)
 	now := time.Now().UnixMilli()
-	for _, j := range svc.jobs {
+	// in id order, so that topics and metrics are registered in creation order
+	for _, id := range sortedJobIDs(svc.jobs) {
+		j := svc.jobs[id]
 		switch j.GetState() {
 		case job.JobPending:
 			svc.pendingJobs[j.JobUUID] = j
@@ -280,13 +285,8 @@ func (svc *Service) TryEnqueuePendingJobs() {
 		}
 	}
 
-	// sort the pending jobs by (priority, creation timestamp)
-	sort.Slice(pendingJobs, func(i, j int) bool {
-		if pendingJobs[i].Priority == pendingJobs[j].Priority {
-			return pendingJobs[i].GetCreationTimestamp() < pendingJobs[j].GetCreationTimestamp()
-		}
-		return pendingJobs[i].Priority > pendingJobs[j].Priority
-	})
+	// sort the pending jobs by (priority, creation timestamp, id)
+	slices.SortFunc(pendingJobs, compareQueueOrder)
 
 	// try to enqueue the pending jobs (may fail if resources are not available)
 	for _, j := range pendingJobs {
@@ -666,13 +666,8 @@ func (svc *Service) FindBestJobCandidates(req *RequestPullJobs) ([]*job.Job, err
 		}
 	}
 
-	// second step: sort the jobs by (priority, creation timestamp)
-	sort.Slice(bestCandidates, func(i, j int) bool {
-		if bestCandidates[i].Priority == bestCandidates[j].Priority {
-			return bestCandidates[i].GetCreationTimestamp() < bestCandidates[j].GetCreationTimestamp()
-		}
-		return bestCandidates[i].Priority > bestCandidates[j].Priority
-	})
+	// second step: sort the jobs by (priority, creation timestamp, id)
+	slices.SortFunc(bestCandidates, compareQueueOrder)
 
 	// third step: limit the number of jobs
 	if uint(len(bestCandidates)) > req.NumJobs {
@@ -1177,9 +1172,10 @@ func (svc *Service) GetAllJobs() []*job.Job {
 	svc.mapMutex.RLock()
 	defer svc.mapMutex.RUnlock()
 
+	// in id order (creation order), like the jobs file
 	jobs := make([]*job.Job, 0, len(svc.jobs))
-	for _, job := range svc.jobs {
-		jobs = append(jobs, job)
+	for _, id := range sortedJobIDs(svc.jobs) {
+		jobs = append(jobs, svc.jobs[id])
 	}
 	return jobs
 }
@@ -1505,6 +1501,29 @@ func (svc *Service) Run() error {
 	}
 }
 
+// compareQueueOrder orders jobs as the queue serves them: highest priority first, then the
+// oldest, then by id (jobs created in the same millisecond keep a fixed order).
+func compareQueueOrder(a, b *job.Job) int {
+	if a.Priority != b.Priority {
+		return int(b.Priority) - int(a.Priority)
+	}
+	if ca, cb := a.GetCreationTimestamp(), b.GetCreationTimestamp(); ca != cb {
+		return cmp.Compare(ca, cb)
+	}
+	return bytes.Compare(a.JobUUID[:], b.JobUUID[:])
+}
+
+// sortedJobIDs returns the ids of the jobs in increasing order (creation order for
+// version 7 ids).
+func sortedJobIDs(jobs job.JobMap) []job.JobUUID {
+	ids := make([]job.JobUUID, 0, len(jobs))
+	for id := range jobs {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b job.JobUUID) int { return bytes.Compare(a[:], b[:]) })
+	return ids
+}
+
 func requiresLockedResources(lockedResources job.LockedResources, job *job.Job) bool {
 	// Helper function to check if a job requires locked resources
 	for _, r := range job.LockResources { // BUG: fatal error: concurrent map read and map write
@@ -1794,8 +1813,12 @@ func (svc *Service) sortJobs(jobs []*job.Job, sortParam string) {
 			}
 		}
 
-		// All criteria were equal, maintain stable sort by using creation timestamp as final fallback
-		return jobs[i].GetCreationTimestamp() < jobs[j].GetCreationTimestamp()
+		// All criteria were equal: creation time, then id, so that the order is the same
+		// for every request
+		if ci, cj := jobs[i].GetCreationTimestamp(), jobs[j].GetCreationTimestamp(); ci != cj {
+			return ci < cj
+		}
+		return bytes.Compare(jobs[i].JobUUID[:], jobs[j].JobUUID[:]) < 0
 	})
 }
 
