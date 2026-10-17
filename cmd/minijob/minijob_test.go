@@ -218,3 +218,41 @@ func TestAdminShutdownWhileBusy(t *testing.T) {
 		t.Fatalf("the service must stop after the HTTP server:\n%s", logs)
 	}
 }
+
+func TestConfigurationErrorsExitWithoutPanic(t *testing.T) {
+	cases := map[string]struct {
+		replacements []string
+		message      string
+	}{
+		"negative writeFrequency": {
+			[]string{"        enablePersistentStorage: false\n", "        enablePersistentStorage: false\n        writeFrequency: -1\n"},
+			"invalid value for configuration backend.inMemory.writeFrequency: -1",
+		},
+		"invalid logger": {
+			[]string{"logger:\n    level: \"info\"\n    development: false\n    disableCaller: true\n    disableStacktrace: true\n    encoding: \"json\"",
+				"logger:\n    level: \"info\"\n    development: false\n    disableCaller: true\n    disableStacktrace: true\n    encoding: \"nope\""},
+			"Error while initializing logger",
+		},
+		"invalid CORS origin": {
+			[]string{"    cors:\n        enable: false\n        allowOrigins: \"*\"", "    cors:\n        enable: true\n        allowOrigins: \"not an origin\""},
+			"[CORS] Invalid origin format in configuration: not an origin",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, c.replacements...)
+			cmd := exec.Command(os.Args[0], "-test.run=^$")
+			cmd.Env = append(os.Environ(), "MINIJOB_RUN_MAIN=1", "MINIJOB_ARGS=-config "+path)
+			out, _ := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code != 1 {
+				t.Fatalf("exit status %d, want 1:\n%s", code, out)
+			}
+			if strings.Contains(string(out), "panic") {
+				t.Fatalf("panic:\n%s", out)
+			}
+			if !strings.Contains(string(out), c.message) {
+				t.Fatalf("missing %q:\n%s", c.message, out)
+			}
+		})
+	}
+}
