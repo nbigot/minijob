@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/healthcheck"
@@ -185,6 +186,7 @@ func (w *WebAPIServer) Init() error {
 		}
 
 		// Parse the JSON schema
+		registerSchemaKeywords()
 		w.schema = jsonschema.Schema{}
 		if err := w.schema.UnmarshalJSON(schemaBytes); err != nil {
 			return fmt.Errorf("error unmarshaling schema: %v", err)
@@ -195,6 +197,18 @@ func (w *WebAPIServer) Init() error {
 		w.schema = jsonschema.Schema{}
 	}
 	return nil
+}
+
+var registerSchemaKeywordsOnce sync.Once
+
+// registerSchemaKeywords loads the JSON schema keywords once, with the draft-07 keyword
+// "definitions" as an alias of "$defs": the validator lists "definitions" as unsupported,
+// so every "$ref": "#/definitions/..." failed to resolve and rejected every request.
+func registerSchemaKeywords() {
+	registerSchemaKeywordsOnce.Do(func() {
+		jsonschema.LoadDraft2019_09()
+		jsonschema.RegisterKeyword("definitions", jsonschema.NewDefs)
+	})
 }
 
 func NewWebAPIServer(appConfig *config.Config, fiberConfig fiber.Config, service service.IService, funcShutdownServer func(), funcRestartServer func()) *WebAPIServer {
