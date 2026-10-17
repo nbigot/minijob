@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/nbigot/minijob/event"
 	"github.com/nbigot/minijob/job"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1337,4 +1337,38 @@ func TestServiceMetrics_ActiveDurationInSeconds(t *testing.T) {
 	pb := &dto.Metric{}
 	require.NoError(t, s.Metrics.JobActiveDurationHistogram.WithLabelValues("t").(prometheus.Histogram).Write(pb))
 	assert.InDelta(t, 100.0, pb.GetHistogram().GetSampleSum(), 5.0)
+}
+
+func TestServiceMetrics_TopicsUnderConcurrency(t *testing.T) {
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	const topics, racers = 200, 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < topics; i++ {
+		topic := "topic-" + uuid.NewString()
+		for r := 0; r < racers; r++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if r%2 == 0 {
+					s.NotifyTopicEvent(event.ServiceEventEmptyPollReceived, topic)
+				} else {
+					s.UpdateResourcesLockedCountMetric(topic, 1)
+				}
+				_ = s.GetTopics()
+			}()
+		}
+	}
+	close(start)
+	wg.Wait()
+	seen := map[string]int{}
+	for _, topic := range s.GetTopics() {
+		seen[topic]++
+	}
+	assert.Equal(t, topics, len(seen), "every topic is listed")
+	for topic, n := range seen {
+		assert.Equal(t, 1, n, "topic %s listed %d times", topic, n)
+	}
 }
