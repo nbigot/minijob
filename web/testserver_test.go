@@ -2,6 +2,8 @@ package web
 
 import (
 	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -51,6 +53,29 @@ func send(t *testing.T, app *fiber.App, method, path, contentType, body string) 
 	}
 	resp, err := app.Test(req, -1)
 	require.NoError(t, err)
+	b, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(b)
+}
+
+// listen serves the app on a free local port and returns its base URL.
+func listen(t *testing.T, app *fiber.App) string {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = app.Listener(ln) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+	return "http://" + ln.Addr().String()
+}
+
+// httpSend sends one request over the client's keep-alive connections.
+func httpSend(t *testing.T, client *http.Client, method, url string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	return resp.StatusCode, string(b)

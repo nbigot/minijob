@@ -473,7 +473,9 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 	}
 
 	// topic to pull the job from (if empty pull from any topic)
-	topic := c.Query(constants.JobTopicParam)
+	// (copied: c.Query points into a buffer that later requests reuse, and the topic of
+	// an empty pull is kept by the metrics)
+	topic := strings.Clone(c.Query(constants.JobTopicParam))
 
 	// job uuid to pull (if empty pull any job)
 	jobUUID, errApi := GetJobUUIDFromQuery(c)
