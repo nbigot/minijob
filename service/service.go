@@ -1199,7 +1199,15 @@ func (svc *Service) UnlockAllResources() error {
 func (svc *Service) UnlockResource(resourceName string) error {
 	// this is used to unlock a specific resource
 	// it is not used in normal operation (it is a safety net)
-	return svc.resourcesManager.UnlockResource(resourceName)
+	if err := svc.resourcesManager.UnlockResource(resourceName); err != nil {
+		return &apierror.APIError{
+			Message:  err.Error(),
+			Code:     constants.ErrorResourceNotFound,
+			HttpCode: fiber.StatusNotFound,
+			Err:      err,
+		}
+	}
+	return nil
 }
 
 func (svc *Service) Healthcheck() bool {

@@ -22,6 +22,8 @@ const ErrorCantDeserializeJson = 1022
 const ErrorInvalidJsonData = 1023
 const ErrorInvalidContentType = 1024
 
+const ErrorResourceNotFound = 1030
+
 const ErrorCantPutMessageIntoJob = 1110
 const ErrorCantPutMessagesIntoJob = 1111
 const ErrorCantDeserializeJsonRecords = 1112
