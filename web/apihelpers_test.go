@@ -122,7 +122,10 @@ func TestGetJobUUIDFromParameter(t *testing.T) {
 
 	for _, test := range tests {
 		req := httptest.NewRequest("GET", test.route, nil)
-		resp, _ := app.Test(req, 1)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatalf("%s: %v", test.description, err)
+		}
 		assert.Equalf(t, test.expectedCode, resp.StatusCode, test.description)
 		if !test.expectError {
 			body, err := io.ReadAll(resp.Body)
