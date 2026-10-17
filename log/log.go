@@ -10,19 +10,21 @@ var Logger *zap.Logger
 var SugarLogger *zap.SugaredLogger
 var LoggerConfig *zap.Config
 
-func InitLogger(loggerConfig *zap.Config) {
-
-	var err error
-	LoggerConfig = loggerConfig
-	Logger, err = LoggerConfig.Build()
+// InitLogger builds the logger. An invalid configuration is reported (and returned): the
+// caller stops with an error.
+func InitLogger(loggerConfig *zap.Config) error {
+	logger, err := loggerConfig.Build()
 	if err != nil {
 		fmt.Println("Error while initializing logger")
-		panic(err)
+		return err
 	}
+	LoggerConfig = loggerConfig
+	Logger = logger
 	SugarLogger = Logger.Sugar()
 	Logger.Info(
 		"Initialize logger",
 		zap.String("topic", "server"),
 		zap.String("method", "InitLogger"),
 	)
+	return nil
 }

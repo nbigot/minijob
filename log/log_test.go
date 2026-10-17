@@ -11,7 +11,9 @@ func TestInitLogger(t *testing.T) {
 	config := zap.NewProductionConfig()
 	config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 
-	InitLogger(&config)
+	if err := InitLogger(&config); err != nil {
+		t.Fatal(err)
+	}
 
 	if Logger == nil {
 		t.Error("Expected Logger to be initialized, but it is nil")
@@ -27,12 +29,9 @@ func TestInitLogger(t *testing.T) {
 }
 
 func TestInitLoggerWithInvalidConfig(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic for invalid logger config, but did not panic")
-		}
-	}()
-
+	// An invalid configuration is an error (the program reports it and exits), not a panic.
 	invalidConfig := zap.Config{}
-	InitLogger(&invalidConfig)
+	if err := InitLogger(&invalidConfig); err == nil {
+		t.Error("Expected an error for an invalid logger config")
+	}
 }

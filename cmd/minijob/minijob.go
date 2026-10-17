@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/nbigot/minijob/config"
@@ -49,12 +50,28 @@ func WithFiberLogger() webserver.ServerOption {
 func WithCors() webserver.ServerOption {
 	return func(s *webserver.Server) {
 		if s.GetWebConfig().Cors.Enable {
-			s.GetApp().Use(cors.New(cors.Config{
+			handler, err := newCors(cors.Config{
 				AllowOrigins: s.GetWebConfig().Cors.AllowOrigins,
 				AllowHeaders: s.GetWebConfig().Cors.AllowHeaders,
-			}))
+			})
+			if err != nil {
+				s.SetInitError(err)
+				return
+			}
+			s.GetApp().Use(handler)
 		}
 	}
+}
+
+// newCors creates the CORS middleware. Fiber panics on an invalid origin: the panic is
+// returned as an error, so that the server stops with a message instead of crashing.
+func newCors(config cors.Config) (handler fiber.Handler, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return cors.New(config), nil
 }
 
 func WithPrometheus() webserver.ServerOption {

@@ -137,7 +137,9 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("error while parsing configuration file %s : %s", filename, err.Error())
 	}
 
-	log.InitLogger(&configuration.LoggerConfig)
+	if err := log.InitLogger(&configuration.LoggerConfig); err != nil {
+		return nil, err
+	}
 	log.Logger.Info(
 		"Configuration loaded",
 		zap.String("topic", "server"),

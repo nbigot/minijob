@@ -458,6 +458,9 @@ func NewInMemoryJobBackendProvider(logger *zap.Logger, conf *config.Config) (job
 	}
 
 	writeFrequency := conf.Backend.InMemory.WriteFrequency
+	if writeFrequency < 0 {
+		return nil, fmt.Errorf("invalid value for configuration backend.inMemory.writeFrequency: %d", writeFrequency)
+	}
 	if writeFrequency == 0 {
 		writeFrequency = 300 // default value in seconds is 5 minutes
 	}

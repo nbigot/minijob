@@ -38,6 +38,7 @@ type Server struct {
 	service      service.IService
 	webAPIServer *web.WebAPIServer
 	consulClient *consul.Client
+	initErr      error // error found while applying the options
 }
 
 // Option is a functional option type that allows us to configure the Server.
@@ -78,6 +79,9 @@ func (s *Server) Initialize(ctx context.Context, options ...ServerOption) error 
 	// options examples: fiber logger, cors config, add routes, ...
 	for _, opt := range options {
 		opt(s)
+	}
+	if s.initErr != nil {
+		return s.initErr
 	}
 
 	s.SetStatus(ServerStatusInitialized)
@@ -190,6 +194,13 @@ func (s *Server) Finalize() {
 
 	if s.appConfig.Consul.Enable {
 		_ = s.DeRegisterConsul()
+	}
+}
+
+// SetInitError is called by an option that cannot be applied: Initialize returns the error.
+func (s *Server) SetInitError(err error) {
+	if s.initErr == nil {
+		s.initErr = err
 	}
 }
 
