@@ -296,3 +296,83 @@ func TestLongPollTimesOut(t *testing.T) {
 	assert.GreaterOrEqual(t, elapsed, time.Second)
 	assert.Less(t, elapsed, 2*time.Second)
 }
+
+// idleService is initialized but its periodic loop does not run: the tests call the
+// periodic tasks themselves.
+func idleService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := CreateAndInitService(testConfig(t), "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Stop() })
+	return svc
+}
+
+func createJob(t *testing.T, svc *Service, body string) job.JobUUID {
+	t.Helper()
+	j, err := svc.CreateJob([]byte(body))
+	require.NoError(t, err)
+	return j.JobUUID
+}
+
+func stateOf(t *testing.T, svc *Service, id job.JobUUID) job.JobState {
+	t.Helper()
+	j, _ := svc.GetJob(id)
+	require.NotNil(t, j)
+	return j.GetState()
+}
+
+func pullOne(t *testing.T, svc *Service, id job.JobUUID) {
+	t.Helper()
+	_, err := svc.PullJobs(&RequestPullJobs{JobUUID: &id, NumJobs: 1, VisibilityTimeout: 60})
+	require.NoError(t, err)
+}
+
+func TestDeletingAJobKeepsTheLocksOfOthers(t *testing.T) {
+	svc := idleService(t)
+	a := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	b := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	require.Equal(t, job.JobQueued, stateOf(t, svc, a))
+	require.Equal(t, job.JobPending, stateOf(t, svc, b))
+
+	// Deleting the pending job does not release the lock of the queued one.
+	require.NoError(t, svc.DeleteJob(b))
+	assert.Equal(t, a, svc.GetLockedResources()["r"])
+
+	// Deleting a completed job does not release the lock taken by the next job.
+	c := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	pullOne(t, svc, a)
+	require.NoError(t, svc.SetJobAsSuccessful(a))
+	require.Equal(t, job.JobQueued, stateOf(t, svc, c))
+	require.NoError(t, svc.DeleteJob(a))
+	assert.Equal(t, c, svc.GetLockedResources()["r"])
+}
+
+func TestDelayedRetryLocksItsResourcesAgain(t *testing.T) {
+	svc := idleService(t)
+	a := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	pullOne(t, svc, a)
+	_, err := svc.FailJob(a) // retried after the backoff delay (milliseconds)
+	require.NoError(t, err)
+	require.Equal(t, job.JobHidden, stateOf(t, svc, a))
+
+	b := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	pullOne(t, svc, b)
+	time.Sleep(20 * time.Millisecond) // the retry of a is due
+	svc.AttemptJobRetries()
+	assert.Equal(t, job.JobHidden, stateOf(t, svc, a), "a must wait: b holds the resource")
+	assert.Equal(t, b, svc.GetLockedResources()["r"])
+
+	require.NoError(t, svc.SetJobAsSuccessful(b))
+	svc.AttemptJobRetries()
+	assert.Equal(t, job.JobQueued, stateOf(t, svc, a))
+	assert.Equal(t, a, svc.GetLockedResources()["r"])
+}
+
+func TestDuplicateResourceNames(t *testing.T) {
+	svc := idleService(t)
+	a := createJob(t, svc, `{"properties":{},"lockResources":["r","r","s"]}`)
+	assert.Equal(t, job.JobQueued, stateOf(t, svc, a))
+	pullOne(t, svc, a)
+	require.NoError(t, svc.SetJobAsSuccessful(a))
+	assert.Empty(t, svc.GetLockedResources())
+}
