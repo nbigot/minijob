@@ -77,4 +77,6 @@ type IJobBackendProvider interface {
 	Healthcheck() bool
 	GetDiskUsage() int64
 	GetType() string
+	// GetMaxJobs is the maximum number of jobs the backend stores (0: no limit)
+	GetMaxJobs() uint
 }
