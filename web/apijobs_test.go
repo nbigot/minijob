@@ -3,9 +3,12 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,4 +62,38 @@ func TestEmptyPullTopicIsKept(t *testing.T) {
 	}
 	_, body = httpSend(t, client, "GET", base+"/api/v1/topics/")
 	assert.JSONEq(t, `{"code":200,"message":"success","topics":["none"]}`, body)
+}
+
+// schemaServer runs the API with JSON schema validation and the given schema.
+func schemaServer(t *testing.T, schema string) *fiber.App {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "schema.json")
+	require.NoError(t, os.WriteFile(path, []byte(schema), 0o600))
+	app, _ := newTestServer(t,
+		"    jsonSchema:\n        enable: false  # Enable JSON schema validation for job data\n",
+		"    jsonSchema:\n        enable: true\n        path: \""+filepath.ToSlash(path)+"\"\n")
+	return app
+}
+
+func TestSchemaWithDefinitions(t *testing.T) {
+	// draft-07 schemas put reusable parts under "definitions"
+	app := schemaServer(t, `{
+		"$schema": "http://json-schema.org/draft-07/schema",
+		"type": "object",
+		"required": ["properties"],
+		"properties": {
+			"properties": {"$ref": "#/definitions/props"},
+			"topic": {"$ref": "#/definitions/name"}
+		},
+		"definitions": {
+			"props": {"type": "object"},
+			"name": {"type": "string"}
+		}
+	}`)
+	status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{"topic":"t","properties":{}}`)
+	assert.Equal(t, 200, status, body)
+	status, body = send(t, app, "POST", "/api/v1/job/", "application/json", `{"topic":5,"properties":{}}`)
+	assert.Equal(t, 400, status, body)
+	assert.JSONEq(t, `{"error":"invalid json content","code":1023,"jobUUID":"00000000-0000-0000-0000-000000000000",
+		"validationErrors":[{"failedField":"/topic","tag":"type should be string, got integer","value":"5"}]}`, body)
 }
