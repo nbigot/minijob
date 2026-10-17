@@ -179,6 +179,8 @@ func (p *MockJobBackendProvider) OnJobTimeout(j *job.Job) error {
 	return nil
 }
 
+func (p *MockJobBackendProvider) WaitWrites() {}
+
 func (p *MockJobBackendProvider) OnJobsDeleted() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

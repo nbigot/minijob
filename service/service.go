@@ -184,6 +184,7 @@ func (svc *Service) LoadJobs() error {
 }
 
 func (svc *Service) CreateJob(payload []byte) (*job.Job, error) {
+	defer svc.waitWrites()
 	// decode the request before taking the lock
 	j, decodeErr := job.NewJobFromRequest(payload)
 
@@ -494,6 +495,7 @@ func (svc *Service) generateNewJobUuidLocked() (job.JobUUID, error) {
 }
 
 func (svc *Service) DeleteJob(jobUUID job.JobUUID) error {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	return svc.deleteJobLocked(jobUUID)
@@ -552,6 +554,7 @@ func (svc *Service) deleteJobLocked(jobUUID job.JobUUID) error {
 }
 
 func (svc *Service) DeleteAllJobs() error {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
@@ -565,6 +568,7 @@ func (svc *Service) DeleteAllJobs() error {
 }
 
 func (svc *Service) DeleteQueuedJobs() error {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
@@ -618,6 +622,7 @@ func (svc *Service) unlockJobResourcesLocked(j *job.Job) {
 }
 
 func (svc *Service) PullJobs(req *RequestPullJobs) (*ResponsePullJobs, error) {
+	defer svc.waitWrites()
 	// pull one or multiple jobs from the queue and start it/them
 	if req.JobUUID != nil {
 		return svc.PullSpecificJob(req)
@@ -751,6 +756,7 @@ func (svc *Service) findBestJobCandidatesLocked(req *RequestPullJobs) ([]*job.Jo
 }
 
 func (svc *Service) PullSpecificJob(req *RequestPullJobs) (*ResponsePullJobs, error) {
+	defer svc.waitWrites()
 	// ignore the parameters topic and wait time
 	// check if the specific job (req.JobUUID) is in the queue
 	if req.JobUUID == nil {
@@ -786,6 +792,7 @@ func (svc *Service) PullSpecificJob(req *RequestPullJobs) (*ResponsePullJobs, er
 }
 
 func (svc *Service) StartJob(jobUUID job.JobUUID, req *RequestPullJobs) error {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	return svc.startJobLocked(jobUUID, req)
@@ -855,6 +862,7 @@ func (svc *Service) startJobLocked(jobUUID job.JobUUID, req *RequestPullJobs) er
 }
 
 func (svc *Service) CloneJob(jobUUID job.JobUUID) (*job.Job, error) {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
@@ -882,6 +890,7 @@ func (svc *Service) CloneJob(jobUUID job.JobUUID) (*job.Job, error) {
 }
 
 func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
@@ -945,6 +954,7 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 }
 
 func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
+	defer svc.waitWrites()
 	// cancel a job that is running and put it back in the queue
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
@@ -1022,6 +1032,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 }
 
 func (svc *Service) FailJob(jobUUID job.JobUUID) (reachedMaxRetry bool, err error) {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	return svc.failJobLocked(jobUUID)
@@ -1160,6 +1171,7 @@ func (svc *Service) retryJobLaterLocked(j *job.Job, nextRetryTime int64) error {
 }
 
 func (svc *Service) ChangeVisibilityTimeoutJob(jobUUID job.JobUUID, visibilityTimeout uint) error {
+	defer svc.waitWrites()
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 
@@ -1185,6 +1197,13 @@ func (svc *Service) ChangeVisibilityTimeoutJob(jobUUID job.JobUUID, visibilityTi
 	j.VisibilityTimeout = visibilityTimeout
 
 	return nil
+}
+
+// waitWrites waits until the backend saved the changes made so far (Redis writes), so that
+// a request answers once its changes are stored. It is deferred before the lock is taken,
+// to run after the unlock.
+func (svc *Service) waitWrites() {
+	svc.bp.WaitWrites()
 }
 
 // GetJob returns a snapshot of the job, or nil when it does not exist.
@@ -1259,6 +1278,7 @@ func (svc *Service) GetLockedResources() job.LockedResources {
 }
 
 func (svc *Service) UnlockAllResources() error {
+	defer svc.waitWrites()
 	// this is used to unlock all resources in case of a blocking situation
 	// it is not used in normal operation (it is a safety net)
 	svc.mu.Lock()
@@ -1275,6 +1295,7 @@ func (svc *Service) unlockAllResourcesLocked() error {
 }
 
 func (svc *Service) UnlockResource(resourceName string) error {
+	defer svc.waitWrites()
 	// this is used to unlock a specific resource
 	// it is not used in normal operation (it is a safety net)
 	svc.mu.Lock()
