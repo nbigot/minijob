@@ -422,6 +422,9 @@ func (s *ServiceMetrics) GetTopicsStats() []TopicMetrics {
 }
 
 func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int) {
+	if !s.enabledCollect {
+		return
+	}
 	jobMetrics := s.GetMetricByTopic(topic)
 	if inc < 0 {
 		jobMetrics.ResourcesLockedCount -= uint(inc)
@@ -458,6 +461,10 @@ func (s *ServiceMetrics) AddTopic(topic string) *JobMetrics {
 }
 
 func (s *ServiceMetrics) UpdateJobStatistics(jm job.JobMap) {
+	if !s.enabledCollect {
+		// the Prometheus vectors are only created when metrics are enabled
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -491,6 +498,9 @@ func (s *ServiceMetrics) UpdateJobDurationPercentiles(jm job.JobMap, now int64) 
 	}
 
 	for _, job := range jm {
+		if p[job.Topic] == nil {
+			p[job.Topic] = &UpdateJobDurationPercentilesDetail{}
+		}
 		if job.IsCompleted() {
 			p[job.Topic].CompletedJobsDurations = append(p[job.Topic].CompletedJobsDurations, job.GetDurationMsSinceLastAndFirstEvent())
 		} else {
