@@ -1197,3 +1197,29 @@ func TestServiceMetrics_UpdateMetricsFromJobHistory_WithResources(t *testing.T) 
 	_, exists = serviceMetrics.ResourceMetricsMap.Load("resource-hist-2")
 	assert.True(t, exists)
 }
+
+func TestServiceMetrics_UpdateJobStatistics_MetricsDisabled(t *testing.T) {
+	// With metrics disabled, Init is never called (the metrics are not registered as an
+	// observer): the periodic statistics must not touch the Prometheus vectors.
+	serviceMetrics := NewServiceMetrics(false)
+	jobUUID, _ := uuid.NewV7()
+	j := &job.Job{JobUUID: jobUUID, Topic: "topic1"}
+	j.Init(jobUUID, time.Now().UnixMilli())
+	assert.NotPanics(t, func() {
+		serviceMetrics.UpdateJobStatistics(job.JobMap{jobUUID: j})
+		serviceMetrics.UpdateResourcesLockedCountMetric("topic1", 1)
+	})
+}
+
+func TestServiceMetrics_UpdateJobStatistics_UnknownTopic(t *testing.T) {
+	// A job whose topic was never seen by the metrics (for instance loaded before the
+	// metrics were enabled) must not crash the statistics.
+	serviceMetrics := NewServiceMetrics(true)
+	require.NoError(t, serviceMetrics.Init())
+	jobUUID, _ := uuid.NewV7()
+	j := &job.Job{JobUUID: jobUUID, Topic: "never-seen"}
+	j.Init(jobUUID, time.Now().UnixMilli())
+	assert.NotPanics(t, func() {
+		serviceMetrics.UpdateJobStatistics(job.JobMap{jobUUID: j})
+	})
+}
