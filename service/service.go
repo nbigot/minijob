@@ -1801,7 +1801,5 @@ func (svc *Service) sortJobs(jobs []*job.Job, sortParam string) {
 
 // Helper function for case-insensitive string contains
 func contains(s, substr string) bool {
-	return len(substr) == 0 || len(s) >= len(substr) &&
-		(s == substr || len(s) > len(substr) &&
-			strings.Contains(strings.ToLower(s), strings.ToLower(substr)))
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
