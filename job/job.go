@@ -1,7 +1,11 @@
 package job
 
 import (
+	"bytes"
 	"encoding/json"
+	"reflect"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -10,11 +14,11 @@ import (
 	"github.com/nbigot/minijob/web/apierror"
 )
 
-type JobUUID = uuid.UUID                    // JobUUID is the unique identifier of a job
-type JobProperties = map[string]interface{} // JobProperties is the properties of a job
-type JobUUIDList []JobUUID                  // JobUUIDList is a list of JobUUID
-type ResourceList []string                  // ResourceList is a list of resources
-type LockedResources = map[string]JobUUID   // LockedResources is a map of resources and their associated job
+type JobUUID = uuid.UUID                  // JobUUID is the unique identifier of a job
+type JobProperties map[string]interface{} // JobProperties is the properties of a job (see UnmarshalJSON)
+type JobUUIDList []JobUUID                // JobUUIDList is a list of JobUUID
+type ResourceList []string                // ResourceList is a list of resources
+type LockedResources = map[string]JobUUID // LockedResources is a map of resources and their associated job
 
 // JobEvent describes every event that can happen to a job (in job history)
 const (
@@ -242,7 +246,7 @@ func (j *Job) Clone() *Job {
 	}
 	var properties JobProperties
 	if j.JobProperties != nil {
-		properties = deepCopyValue(j.JobProperties).(map[string]interface{})
+		properties = deepCopyValue(map[string]interface{}(j.JobProperties)).(map[string]interface{})
 	}
 	return &Job{
 		Topic:             j.Topic,
@@ -401,6 +405,78 @@ func (j *Job) ToResponse() *JobResponse {
 		CallbackURL:       j.CallbackURL,
 		State:             j.GetStateString(),
 	}
+}
+
+// UnmarshalJSON decodes the properties as encoding/json decodes a map (a repeated member adds
+// to the properties, null removes them), except for the numbers: an integer that fits in an
+// int64 or a uint64 keeps its exact value, instead of a float64 that rounds it above 2^53.
+// The other numbers are float64 values, as before.
+func (p *JobProperties) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		*p = nil
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var decoded map[string]interface{}
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if *p == nil {
+		*p = make(JobProperties, len(decoded))
+	}
+	for k, v := range decoded {
+		value, err := exactNumbers(v)
+		if err != nil {
+			return err
+		}
+		(*p)[k] = value
+	}
+	return nil
+}
+
+// exactNumbers replaces the json.Number values found in v (see numberValue).
+func exactNumbers(v interface{}) (interface{}, error) {
+	switch t := v.(type) {
+	case json.Number:
+		return numberValue(t)
+	case map[string]interface{}:
+		for k, e := range t {
+			value, err := exactNumbers(e)
+			if err != nil {
+				return nil, err
+			}
+			t[k] = value
+		}
+	case []interface{}:
+		for i, e := range t {
+			value, err := exactNumbers(e)
+			if err != nil {
+				return nil, err
+			}
+			t[i] = value
+		}
+	}
+	return v, nil
+}
+
+// numberValue converts a JSON number: an integer that fits in an int64 or a uint64 gives that
+// integer, any other number a float64 ("-0" stays the float64 negative zero).
+func numberValue(n json.Number) (interface{}, error) {
+	s := string(n)
+	if s != "-0" && !strings.ContainsAny(s, ".eE") {
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i, nil
+		}
+		if u, err := strconv.ParseUint(s, 10, 64); err == nil {
+			return u, nil
+		}
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil, &json.UnmarshalTypeError{Value: "number " + s, Type: reflect.TypeOf(f)}
+	}
+	return f, nil
 }
 
 // deepCopyValue copies a value decoded from JSON (maps, slices and scalars).

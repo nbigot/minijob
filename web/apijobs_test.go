@@ -174,3 +174,21 @@ func TestSchemaRemoteRefIsNotDownloaded(t *testing.T) {
 	assert.Contains(t, body, `"tag":"failed to resolve schema for ref `+remote.URL+`/name.json"`)
 	assert.Equal(t, int64(0), fetched.Load(), "the schema must not be downloaded while answering a request")
 }
+
+func TestPropertiesKeepExactIntegers(t *testing.T) {
+	app, _ := newTestServer(t)
+	status, body := send(t, app, "POST", "/api/v1/job/", "application/json",
+		`{"properties":{"id":12345678901234567890,"ratio":0.5,"list":[9007199254740993]}}`)
+	require.Equal(t, 200, status, body)
+	exact := `"properties":{"id":12345678901234567890,"list":[9007199254740993],"ratio":0.5}`
+	assert.Contains(t, body, exact)
+	var created struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &created))
+	status, body = send(t, app, "GET", "/api/v1/job/"+created.Job.ID, "", "")
+	require.Equal(t, 200, status, body)
+	assert.Contains(t, body, exact)
+}

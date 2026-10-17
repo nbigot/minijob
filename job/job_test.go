@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJob_UnmarshalJSON(t *testing.T) {
@@ -388,4 +389,43 @@ func TestJob_CloneDoesNotShareData(t *testing.T) {
 
 	assert.Equal(t, JobProperties{"nested": map[string]interface{}{"a": 1.0}, "list": []interface{}{1.0, "x"}}, original.JobProperties)
 	assert.Equal(t, ResourceList{"r1", "r2"}, original.LockResources)
+}
+
+func TestJob_PropertiesKeepExactIntegers(t *testing.T) {
+	properties := `{"big":12345678901234567890,"min":-9223372036854775808,"above53":9007199254740993,` +
+		`"float":1.0,"small":1e-7,"exp":1E2,"negzero":-0,"huge":123456789012345678901234567890,` +
+		`"nested":{"list":[9007199254740993,{"n":18446744073709551615}]}}`
+	// Integers that fit in an int64 or a uint64 are exact, other numbers are float64 values.
+	expected := `{"above53":9007199254740993,"big":12345678901234567890,"exp":100,"float":1,` +
+		`"huge":1.2345678901234568e+29,"min":-9223372036854775808,"negzero":-0,` +
+		`"nested":{"list":[9007199254740993,{"n":18446744073709551615}]},"small":1e-7}`
+
+	fromRequest, err := NewJobFromRequest([]byte(`{"topic":"t","properties":` + properties + `}`))
+	require.NoError(t, err)
+	encoded, err := json.Marshal(fromRequest.JobProperties)
+	require.NoError(t, err)
+	assert.Equal(t, expected, string(encoded))
+
+	fromBackend, err := NewJob([]byte(`{"id":"0190e951-c29a-70aa-ba59-18be4abe9700","topic":"t","properties":` + properties + `}`))
+	require.NoError(t, err)
+	encoded, err = json.Marshal(fromBackend.ToResponse())
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"properties":`+expected)
+
+	// A number out of the float64 range is an error, as before.
+	_, err = NewJobFromRequest([]byte(`{"topic":"t","properties":{"x":1e400}}`))
+	assert.Error(t, err)
+	_, err = NewJobFromRequest([]byte(`{"topic":"t","properties":"x"}`))
+	assert.Error(t, err)
+}
+
+func TestJob_PropertiesDecodedLikeAMap(t *testing.T) {
+	// A repeated member adds to the properties, null removes them (encoding/json map rules).
+	j := &Job{}
+	require.NoError(t, json.Unmarshal([]byte(`{"properties":{"a":1,"b":{"x":1}},"properties":{"b":2.5}}`), j))
+	assert.Equal(t, JobProperties{"a": int64(1), "b": 2.5}, j.JobProperties)
+	require.NoError(t, json.Unmarshal([]byte(`{"properties":null}`), j))
+	assert.Nil(t, j.JobProperties)
+	require.NoError(t, json.Unmarshal([]byte(`{"properties":{}}`), j))
+	assert.Equal(t, JobProperties{}, j.JobProperties)
 }
