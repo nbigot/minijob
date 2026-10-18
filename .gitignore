@@ -40,3 +40,6 @@
 coverage.out
 docker.env
 go_env.properties
+
+# Benchmark results (cmd/benchmark/run.sh)
+/cmd/benchmark/results/

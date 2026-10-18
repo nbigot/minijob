@@ -132,6 +132,19 @@ $ go run cmd/loadtest/loadtest.go -url=http://127.0.0.1:8080 -wait=0 -concurrenc
 The `iterations` and `monkey` parameters significantly affect both test duration and performance metrics. Higher iteration counts increase overall test duration while providing more comprehensive performance data. The `monkey` parameter (ranging from 0-4) controls the level of randomized chaos testing, with higher values introducing more aggressive fault simulation that can substantially impact measured performance.
 
 
+## Run benchmark
+
+`cmd/benchmark` measures throughput, latency, CPU and memory of a server on a set of
+scenarios (create, pull, read, job life cycle) and checks that no job is lost;
+`cmd/benchmark/run.sh` runs it in Docker on every storage backend and writes a report. See
+[cmd/benchmark/README.md](cmd/benchmark/README.md).
+
+```sh
+$ go run ./cmd/benchmark -url http://127.0.0.1:8080 -duration 5
+$ cmd/benchmark/run.sh
+```
+
+
 ## Profiling
 
 [profiler](http://127.0.0.1:8080/debug/pprof/)
