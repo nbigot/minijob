@@ -81,7 +81,7 @@ docker network create "$NET" >/dev/null 2>&1 || true
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "git: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     echo "docker: $(docker version --format '{{.Server.Version}}') $(docker info --format '{{.OperatingSystem}}, kernel {{.KernelVersion}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes')"
-    echo "cpu: $(docker run --rm alpine:3.22 sh -c "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2" | sed 's/^ //')"
+    echo "cpu: $(docker run --rm alpine:3.24 sh -c "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2" | sed 's/^ //')"
     echo "server cpus: $SERVER_CPUS, client cpus: $CLIENT_CPUS (Redis shares the client CPUs)"
     echo "runs: $RUNS, duration: $DURATION s, warm-up: $WARMUP s, concurrency: $CONCURRENCY"
     echo "load generator: $TOOL_IMAGE ($(docker image inspect -f '{{.Id}}' "$TOOL_IMAGE" | cut -c8-19))"
