@@ -45,6 +45,7 @@ type Service struct {
 	version                    string                                 // service version
 	jobs                       job.JobMap                             // hashmap of jobs
 	pendingJobs                job.JobMap                             // hashmap of pending jobs
+	queuedJobs                 *queuedJobs                            // queued jobs in pull order
 	pqRetryJobs                pq.PriorityQueue[*job.Job]             // priority queue of retry jobs
 	pqDelayedJobs              pq.PriorityQueue[*job.Job]             // priority queue of delayed jobs
 	mu                         sync.RWMutex                           // protects the scheduler state (see above)
@@ -156,6 +157,8 @@ func (svc *Service) LoadJobs() error {
 			created = append(created, j)
 		case job.JobPending:
 			svc.pendingJobs[j.JobUUID] = j
+		case job.JobQueued:
+			svc.queuedJobs.add(j)
 		case job.JobHidden:
 			// can retry the job now
 			svc.pqRetryJobs.Enqueue(j, -now)
@@ -289,7 +292,7 @@ func (svc *Service) finalizeJobCreationLocked(j *job.Job) (*job.Job, error) {
 
 func (svc *Service) setJobStateToDelayedLocked(j *job.Job) {
 	// delay the job by adding a history event
-	j.AddHistoryEvent(job.JobEventDelay, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventDelay, time.Now().UnixMilli())
 	// the job is delayed
 	svc.pqDelayedJobs.Enqueue(j, -j.StartAfter)
 	// send a notification that the job has been delayed
@@ -298,7 +301,7 @@ func (svc *Service) setJobStateToDelayedLocked(j *job.Job) {
 
 func (svc *Service) setJobStateToPendingLocked(j *job.Job) {
 	// add a history event
-	j.AddHistoryEvent(job.JobEventPending, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventPending, time.Now().UnixMilli())
 	// the job is pending (the caller tries to enqueue the pending jobs)
 	svc.pendingJobs[j.JobUUID] = j
 	// send a notification that the job is pending
@@ -381,7 +384,7 @@ func (svc *Service) retryJobLocked(j *job.Job) error {
 	now := time.Now().UnixMilli()
 
 	// Enqueue the job by adding a history event
-	j.AddHistoryEvent(job.JobEventEnqueue, now)
+	svc.addHistoryEventLocked(j, job.JobEventEnqueue, now)
 
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
@@ -442,7 +445,7 @@ func (svc *Service) enqueueJobLocked(j *job.Job) error {
 	}
 
 	// Enqueue the job by adding a history event
-	j.AddHistoryEvent(job.JobEventEnqueue, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventEnqueue, time.Now().UnixMilli())
 
 	// Remove the job from the pending jobs
 	delete(svc.pendingJobs, j.JobUUID)
@@ -461,6 +464,18 @@ func (svc *Service) enqueueJobLocked(j *job.Job) error {
 	svc.notifyQueuedLocked()
 
 	return nil
+}
+
+// addHistoryEventLocked adds an event to the history of a job (which changes its state) and
+// keeps the index of the queued jobs in sync.
+func (svc *Service) addHistoryEventLocked(j *job.Job, eventType string, timestamp int64) {
+	if j.GetState() == job.JobQueued {
+		svc.queuedJobs.remove(j)
+	}
+	j.AddHistoryEvent(eventType, timestamp)
+	if j.GetState() == job.JobQueued {
+		svc.queuedJobs.add(j)
+	}
 }
 
 // notifyQueuedLocked wakes the long polls waiting for a queued job.
@@ -521,7 +536,7 @@ func (svc *Service) deleteJobLocked(jobUUID job.JobUUID) error {
 	svc.unlockJobResourcesLocked(j)
 
 	// delete the job (add a history event)
-	j.AddHistoryEvent(job.JobEventDelete, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventDelete, time.Now().UnixMilli())
 
 	// Remove the job from the retry queue (if it is in the retry queue)
 	_ = svc.pqRetryJobs.Remove(j) // Ignore error - job might not be in the queue
@@ -561,6 +576,7 @@ func (svc *Service) DeleteAllJobs() error {
 	svc.pqDelayedJobs.Clear()
 	svc.jobs = make(job.JobMap)
 	svc.pendingJobs = make(job.JobMap)
+	svc.queuedJobs = newQueuedJobs()
 	_ = svc.unlockAllResourcesLocked() // Ignore error during deletion
 	svc.eventNotifier.NotifyEvent(event.ServiceEventJobDeletedAll)
 	return nil
@@ -716,24 +732,9 @@ func (svc *Service) findBestJobCandidatesLocked(req *RequestPullJobs) ([]*job.Jo
 		}
 	}
 
-	bestCandidates := make([]*job.Job, 0)
-
-	// first step: loop over the jobs and filter the jobs
-	for _, j := range svc.jobs {
-		// filter the jobs by topic
-		// note: the topic "*" means all topics
-		if req.Topic != "*" && j.Topic != req.Topic {
-			continue
-		}
-
-		// filter the jobs by state
-		if j.GetState() != job.JobQueued {
-			continue
-		}
-
-		bestCandidates = append(bestCandidates, j)
-	}
-
+	// the first queued jobs of the topic (the topic "*" means all topics), in the order
+	// (priority, creation timestamp, id)
+	bestCandidates := svc.queuedJobs.first(req.Topic, req.NumJobs)
 	if len(bestCandidates) == 0 {
 		return nil, &apierror.APIError{
 			Message:  "no job found that is ready or matches the criteria",
@@ -741,14 +742,6 @@ func (svc *Service) findBestJobCandidatesLocked(req *RequestPullJobs) ([]*job.Jo
 			HttpCode: fiber.StatusNotFound,
 			JobUUID:  job.JobUUID{},
 		}
-	}
-
-	// second step: sort the jobs by (priority, creation timestamp, id)
-	slices.SortFunc(bestCandidates, compareQueueOrder)
-
-	// third step: limit the number of jobs
-	if uint(len(bestCandidates)) > req.NumJobs {
-		bestCandidates = bestCandidates[:req.NumJobs]
 	}
 
 	return bestCandidates, nil
@@ -841,7 +834,7 @@ func (svc *Service) startJobLocked(jobUUID job.JobUUID, req *RequestPullJobs) er
 	delete(svc.pendingJobs, j.JobUUID)
 
 	// start the job (add a history event)
-	j.AddHistoryEvent(job.JobEventStart, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventStart, time.Now().UnixMilli())
 
 	j.VisibilityTimeout = req.VisibilityTimeout
 
@@ -934,7 +927,7 @@ func (svc *Service) SetJobAsSuccessful(jobUUID job.JobUUID) error {
 	svc.unlockJobResourcesLocked(j)
 
 	// finish the job (add a history event)
-	j.AddHistoryEvent(job.JobEventSuccess, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventSuccess, time.Now().UnixMilli())
 
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
@@ -996,7 +989,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	}
 
 	// cancel the job (add a history event)
-	j.AddHistoryEvent(job.JobEventCancel, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventCancel, time.Now().UnixMilli())
 
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
@@ -1011,7 +1004,7 @@ func (svc *Service) CancelJob(jobUUID job.JobUUID) error {
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobCanceled)
 
 	// Enqueue the job by adding a history event
-	j.AddHistoryEvent(job.JobEventEnqueue, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventEnqueue, time.Now().UnixMilli())
 
 	if svc.conf.Jobs.LogVerbosity > 1 {
 		svc.logger.Info(
@@ -1087,7 +1080,7 @@ func (svc *Service) failJobLocked(jobUUID job.JobUUID) (reachedMaxRetry bool, er
 	}
 
 	// fail the job (add a history event)
-	j.AddHistoryEvent(job.JobEventFail, time.Now().UnixMilli())
+	svc.addHistoryEventLocked(j, job.JobEventFail, time.Now().UnixMilli())
 
 	// notify event
 	svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobFailed)
@@ -1115,7 +1108,7 @@ func (svc *Service) failJobLocked(jobUUID job.JobUUID) (reachedMaxRetry bool, er
 func (svc *Service) onJobFailedTooManyTimesLocked(j *job.Job) (reachedMaxRetry bool, err error) {
 	// the job has failed too many times, set it as terminated
 	now := time.Now().UnixMilli()
-	j.AddHistoryEvent(job.JobEventTerminate, now)
+	svc.addHistoryEventLocked(j, job.JobEventTerminate, now)
 
 	// unlock the resources
 	svc.unlockJobResourcesLocked(j)
@@ -1150,7 +1143,7 @@ func (svc *Service) retryJobLaterLocked(j *job.Job, nextRetryTime int64) error {
 
 	// set job state to JobHidden
 	now := time.Now().UnixMilli()
-	j.AddHistoryEvent(job.JobEventHide, now)
+	svc.addHistoryEventLocked(j, job.JobEventHide, now)
 
 	// unlock the resources
 	svc.unlockJobResourcesLocked(j)
@@ -1671,6 +1664,7 @@ func NewService(logger *zap.Logger, conf *config.Config, version string) (*Servi
 		bp:               bp,
 		jobs:             make(job.JobMap),
 		pendingJobs:      make(job.JobMap),
+		queuedJobs:       newQueuedJobs(),
 		pqRetryJobs:      *pq.NewPriorityQueue(jobEqual),
 		pqDelayedJobs:    *pq.NewPriorityQueue(jobEqual),
 		notifChanBP:      make(chan jobbackendprovider.Event, 1000),
