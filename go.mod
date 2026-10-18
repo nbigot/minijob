@@ -1,8 +1,9 @@
 module github.com/nbigot/minijob
 
-go 1.25.3
+go 1.27.2
 
 require (
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/gofiber/swagger v1.1.1
 	github.com/google/uuid v1.6.0
@@ -20,7 +21,6 @@ require (
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
-	github.com/alicebob/miniredis/v2 v2.40.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
