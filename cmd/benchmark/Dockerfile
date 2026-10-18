@@ -7,6 +7,6 @@ COPY cmd/benchmark ./cmd/benchmark
 ENV CGO_ENABLED=0
 RUN go build -o /benchmark ./cmd/benchmark
 
-FROM alpine:3.22
+FROM alpine:3.24
 COPY --from=build /benchmark /usr/local/bin/benchmark
 ENTRYPOINT ["benchmark"]
