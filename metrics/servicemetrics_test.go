@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -1371,4 +1372,19 @@ func TestServiceMetrics_TopicsUnderConcurrency(t *testing.T) {
 	for topic, n := range seen {
 		assert.Equal(t, 1, n, "topic %s listed %d times", topic, n)
 	}
+}
+
+func TestResourcesMetricsSortedByName(t *testing.T) {
+	s := NewServiceMetrics(true)
+	var want []string
+	for i := 49; i >= 0; i-- {
+		name := fmt.Sprintf("r%02d", i)
+		s.ResourceMetricsMap.Store(name, &ResourceMetrics{ResourceName: name, Topic: "t"})
+		want = append([]string{name}, want...)
+	}
+	var got []string
+	for _, m := range s.GetResourcesMetrics() {
+		got = append(got, m.ResourceName)
+	}
+	assert.Equal(t, want, got)
 }
