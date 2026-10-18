@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"cmp"
 	"slices"
 	"sync"
 	"time"
@@ -410,6 +411,7 @@ func (s *ServiceMetrics) GetResourcesMetrics() []ResourceMetrics {
 		return true
 	})
 
+	slices.SortFunc(stats, func(a, b ResourceMetrics) int { return cmp.Compare(a.ResourceName, b.ResourceName) })
 	return stats
 }
 
