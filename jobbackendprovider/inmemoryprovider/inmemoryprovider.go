@@ -146,7 +146,7 @@ func (p *InMemoryJobBackendProvider) OnJobCreated(j *job.Job) error {
 		return fmt.Errorf("cannot create job, max limit reached: %d", p.maxJobs)
 	}
 
-	p.jobs[j.JobUUID] = j.Snapshot()
+	p.keepLocked(j)
 	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobCreated, JobUUID: j.JobUUID})
 	return nil
@@ -163,9 +163,6 @@ func (p *InMemoryJobBackendProvider) OnJobPending(j *job.Job) error {
 }
 
 func (p *InMemoryJobBackendProvider) OnJobEnqueued(j *job.Job) error {
-	p.mapMutex.Lock()
-	p.jobs[j.JobUUID] = j.Snapshot()
-	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobEnqueued, JobUUID: j.JobUUID})
 	return nil
 }
@@ -217,11 +214,21 @@ func (p *InMemoryJobBackendProvider) OnJobTimeout(j *job.Job) error {
 func (p *InMemoryJobBackendProvider) OnJobUpdated(j *job.Job) error {
 	p.mapMutex.Lock()
 	if _, known := p.jobs[j.JobUUID]; known {
-		p.jobs[j.JobUUID] = j.Snapshot()
+		p.keepLocked(j)
 	}
 	p.mapMutex.Unlock()
 	p.NotifyChange(jobbackendprovider.Event{Type: jobbackendprovider.EventJobUpdated, JobUUID: j.JobUUID})
 	return nil
+}
+
+// keepLocked stores the job (p.mapMutex held): a copy that the save goroutine writes. Without
+// persistent storage the jobs are never written: only their ids are kept, without a copy.
+func (p *InMemoryJobBackendProvider) keepLocked(j *job.Job) {
+	var saved *job.Job
+	if p.enablePersistentStorage {
+		saved = j.Snapshot()
+	}
+	p.jobs[j.JobUUID] = saved
 }
 
 // WaitWrites returns at once: the jobs are saved periodically.
@@ -332,10 +339,10 @@ func (p *InMemoryJobBackendProvider) NotifyJobEvent(j *job.Job, ev event.Service
 
 	// The jobs are saved by another goroutine: keep a copy of the job as it is now (the
 	// service changes the job itself under its own lock).
-	if ev != event.ServiceEventJobDeleted && ev != event.ServiceEventJobCreated {
+	if p.enablePersistentStorage && ev != event.ServiceEventJobDeleted && ev != event.ServiceEventJobCreated {
 		p.mapMutex.Lock()
 		if _, known := p.jobs[j.JobUUID]; known {
-			p.jobs[j.JobUUID] = j.Snapshot()
+			p.keepLocked(j)
 		}
 		p.mapMutex.Unlock()
 	}

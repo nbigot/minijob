@@ -122,3 +122,38 @@ func TestLoadedJobsAreNotShared(t *testing.T) {
 	defer p.mapMutex.RUnlock()
 	assert.NotSame(t, p.jobs[j.JobUUID], loaded[j.JobUUID])
 }
+
+func TestCopiesOnlyWithPersistentStorage(t *testing.T) {
+	// The copies are only needed to write the jobs file.
+	for _, persistent := range []bool{false, true} {
+		conf := &config.Config{}
+		conf.Backend.InMemory.MaxJobs = 1000
+		conf.Backend.InMemory.EnablePersistentStorage = persistent
+		conf.Backend.InMemory.Directory = t.TempDir()
+		conf.Backend.InMemory.Filename = "jobs.json"
+		bp, err := NewInMemoryJobBackendProvider(zap.NewNop(), conf)
+		require.NoError(t, err)
+		p := bp.(*InMemoryJobBackendProvider)
+		p.SetNotifChan(make(chan jobbackendprovider.Event, 1000))
+		_, err = p.LoadJobs()
+		require.NoError(t, err)
+
+		j := newJob("t")
+		p.NotifyJobEvent(j, event.ServiceEventJobCreated)
+		j.AddHistoryEvent(job.JobEventEnqueue, 2000)
+		p.NotifyJobEvent(j, event.ServiceEventJobEnqueued)
+		exists, err := p.JobExists(j.JobUUID)
+		require.NoError(t, err)
+		assert.True(t, exists)
+		p.mapMutex.RLock()
+		kept := p.jobs[j.JobUUID]
+		p.mapMutex.RUnlock()
+		if persistent {
+			require.NotNil(t, kept)
+			assert.NotSame(t, j, kept)
+			assert.Len(t, kept.History, 2, "the copy is up to date")
+		} else {
+			assert.Nil(t, kept, "no copy without persistent storage")
+		}
+	}
+}
