@@ -403,6 +403,26 @@ func TestCreatedJobIsScheduledAfterLoad(t *testing.T) {
 	assert.Equal(t, job.JobDelayed, stateOf(t, svc, ids[1]))
 }
 
+func TestTopicsListedWithMetricsDisabled(t *testing.T) {
+	dir := t.TempDir()
+	conf := func() *config.Config {
+		return testConfig(t, "    metrics:\n        enable: true\n", "    metrics:\n        enable: false\n",
+			"        enablePersistentStorage: false\n",
+			"        enablePersistentStorage: true\n        directory: \""+filepath.ToSlash(dir)+"\"\n        filename: \"jobs.json\"\n")
+	}
+	svc, err := CreateAndInitService(conf(), "test")
+	require.NoError(t, err)
+	createJob(t, svc, `{"topic":"a","properties":{}}`)
+	createJob(t, svc, `{"topic":"b","properties":{},"lockResources":["r"]}`)
+	assert.Equal(t, []string{"a", "b"}, svc.GetTopics())
+	require.NoError(t, svc.Stop())
+
+	svc, err = CreateAndInitService(conf(), "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Stop() })
+	assert.Equal(t, []string{"a", "b"}, svc.GetTopics(), "after a restart")
+}
+
 func TestBackendMaxJobsIsEnforced(t *testing.T) {
 	svc, err := CreateAndInitService(testConfig(t, "        maxJobs: 10000000\n", "        maxJobs: 3\n"), "test")
 	require.NoError(t, err)

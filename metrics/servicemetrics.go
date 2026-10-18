@@ -447,10 +447,9 @@ func (s *ServiceMetrics) GetTopicsStats() []TopicMetrics {
 	return stats
 }
 
+// UpdateResourcesLockedCountMetric also registers the topic: the topic list
+// (GET /api/v1/topics/) is kept when metrics are disabled.
 func (s *ServiceMetrics) UpdateResourcesLockedCountMetric(topic string, inc int) {
-	if !s.enabledCollect {
-		return
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.updateResourcesLockedCount(topic, inc)
