@@ -1,6 +1,6 @@
 # Load generator image, built from the repository root:
 # docker build -t minijob-benchmark -f cmd/benchmark/Dockerfile .
-FROM golang:1.25 AS build
+FROM golang:1.27.2 AS build
 WORKDIR /go/src
 COPY go.mod go.sum ./
 COPY cmd/benchmark ./cmd/benchmark
