@@ -1841,95 +1841,65 @@ func (svc *Service) sortJobs(jobs []*job.Job, sortParam string) {
 		sortParam = "created_desc" // Default sort
 	}
 
-	// Parse sort criteria
-	sortCriteria := strings.Split(sortParam, ",")
-	for i := range sortCriteria {
-		sortCriteria[i] = strings.TrimSpace(sortCriteria[i])
+	// Parse sort criteria once (unknown ones are ignored)
+	const (
+		byCreated = iota
+		byUpdated
+		byPriority
+		byTopic
+	)
+	type criterion struct {
+		field int
+		desc  bool
+	}
+	var criteria []criterion
+	for _, c := range strings.Split(sortParam, ",") {
+		switch strings.TrimSpace(c) {
+		case "created_asc":
+			criteria = append(criteria, criterion{byCreated, false})
+		case "created_desc":
+			criteria = append(criteria, criterion{byCreated, true})
+		case "priority_asc":
+			criteria = append(criteria, criterion{byPriority, false})
+		case "priority_desc":
+			criteria = append(criteria, criterion{byPriority, true})
+		case "updated_asc":
+			criteria = append(criteria, criterion{byUpdated, false})
+		case "updated_desc":
+			criteria = append(criteria, criterion{byUpdated, true})
+		case "topic_asc":
+			criteria = append(criteria, criterion{byTopic, false})
+		case "topic_desc":
+			criteria = append(criteria, criterion{byTopic, true})
+		}
 	}
 
-	sort.Slice(jobs, func(i, j int) bool {
-		for _, criterion := range sortCriteria {
-			var result int
-
-			switch criterion {
-			case "created_asc":
-				if jobs[i].GetCreationTimestamp() < jobs[j].GetCreationTimestamp() {
-					return true
-				} else if jobs[i].GetCreationTimestamp() > jobs[j].GetCreationTimestamp() {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "created_desc":
-				if jobs[i].GetCreationTimestamp() > jobs[j].GetCreationTimestamp() {
-					return true
-				} else if jobs[i].GetCreationTimestamp() < jobs[j].GetCreationTimestamp() {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "priority_asc":
-				if jobs[i].Priority < jobs[j].Priority {
-					return true
-				} else if jobs[i].Priority > jobs[j].Priority {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "priority_desc":
-				if jobs[i].Priority > jobs[j].Priority {
-					return true
-				} else if jobs[i].Priority < jobs[j].Priority {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "updated_asc":
-				if jobs[i].GetLastUpdateDate() < jobs[j].GetLastUpdateDate() {
-					return true
-				} else if jobs[i].GetLastUpdateDate() > jobs[j].GetLastUpdateDate() {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "updated_desc":
-				if jobs[i].GetLastUpdateDate() > jobs[j].GetLastUpdateDate() {
-					return true
-				} else if jobs[i].GetLastUpdateDate() < jobs[j].GetLastUpdateDate() {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "topic_asc":
-				result = strings.Compare(jobs[i].Topic, jobs[j].Topic)
-				if result < 0 {
-					return true
-				} else if result > 0 {
-					return false
-				}
-				// Equal, continue to next criterion
-
-			case "topic_desc":
-				result = strings.Compare(jobs[j].Topic, jobs[i].Topic)
-				if result < 0 {
-					return true
-				} else if result > 0 {
-					return false
-				}
-				// Equal, continue to next criterion
-
+	slices.SortFunc(jobs, func(a, b *job.Job) int {
+		for _, c := range criteria {
+			var r int
+			switch c.field {
+			case byCreated:
+				r = cmp.Compare(a.GetCreationTimestamp(), b.GetCreationTimestamp())
+			case byUpdated:
+				r = cmp.Compare(a.GetLastUpdateDate(), b.GetLastUpdateDate())
+			case byPriority:
+				r = cmp.Compare(a.Priority, b.Priority)
 			default:
-				// Unknown criterion, skip to next one
-				continue
+				r = strings.Compare(a.Topic, b.Topic)
+			}
+			if c.desc {
+				r = -r
+			}
+			if r != 0 {
+				return r
 			}
 		}
-
 		// All criteria were equal: creation time, then id, so that the order is the same
 		// for every request
-		if ci, cj := jobs[i].GetCreationTimestamp(), jobs[j].GetCreationTimestamp(); ci != cj {
-			return ci < cj
+		if r := cmp.Compare(a.GetCreationTimestamp(), b.GetCreationTimestamp()); r != 0 {
+			return r
 		}
-		return bytes.Compare(jobs[i].JobUUID[:], jobs[j].JobUUID[:]) < 0
+		return bytes.Compare(a.JobUUID[:], b.JobUUID[:])
 	})
 }
 
