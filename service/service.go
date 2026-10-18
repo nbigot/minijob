@@ -413,10 +413,9 @@ func (svc *Service) lockResourcesLocked(j *job.Job) *apierror.APIError {
 		}
 	}
 
-	// Update the resources locked count metric
-	if acquired > 0 {
-		svc.UpdateResourcesLockedCountMetric(j.Topic, acquired)
-	}
+	// Update the resources locked count metric (also when nothing was locked: this
+	// registers the topic of the job)
+	svc.UpdateResourcesLockedCountMetric(j.Topic, acquired)
 
 	return nil
 }
