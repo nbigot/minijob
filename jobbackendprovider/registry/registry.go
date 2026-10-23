@@ -8,6 +8,7 @@ import (
 	"github.com/nbigot/minijob/jobbackendprovider/inmemoryprovider"
 	"github.com/nbigot/minijob/jobbackendprovider/mockprovider"
 	"github.com/nbigot/minijob/jobbackendprovider/redisprovider"
+	"github.com/nbigot/minijob/log"
 	"go.uber.org/zap"
 )
 
@@ -96,7 +97,7 @@ func NewJobBackendProvider(conf *config.Config) (jobbackendprovider.IJobBackendP
 
 func NewLogger(loggerConfig *zap.Config) (*zap.Logger, error) {
 	// Create a new logger
-	logger, err := loggerConfig.Build()
+	logger, err := log.Build(loggerConfig)
 	if err != nil {
 		return nil, err
 	}
