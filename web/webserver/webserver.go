@@ -109,21 +109,25 @@ func (s *Server) RegisterConsul() error {
 	s.consulClient = consulClient
 
 	// Register the service with Consul
+	registration := &consul.AgentServiceRegistration{
+		ID:        s.appConfig.Consul.Service.ID,
+		Name:      s.appConfig.Consul.Service.Name,
+		Tags:      s.appConfig.Consul.Service.Tags,
+		Port:      s.appConfig.Consul.Server.Port,
+		Address:   s.appConfig.Consul.Server.Address,
+		Namespace: s.appConfig.Consul.Service.Namespace,
+		Partition: s.appConfig.Consul.Service.Partition,
+	}
+	if s.appConfig.Consul.HealthCheck.Enable {
+		registration.Check = &consul.AgentServiceCheck{
+			CheckID:  s.appConfig.Consul.HealthCheck.CheckId,
+			HTTP:     s.appConfig.Consul.HealthCheck.URL,
+			Interval: s.appConfig.Consul.HealthCheck.Interval,
+			Timeout:  s.appConfig.Consul.HealthCheck.Timeout,
+		}
+	}
 	err = s.consulClient.Agent().ServiceRegisterOpts(
-		&consul.AgentServiceRegistration{
-			ID:        s.appConfig.Consul.Service.ID,
-			Name:      s.appConfig.Consul.Service.Name,
-			Tags:      s.appConfig.Consul.Service.Tags,
-			Port:      s.appConfig.Consul.Server.Port,
-			Address:   s.appConfig.Consul.Server.Address,
-			Namespace: s.appConfig.Consul.Service.Namespace,
-			Partition: s.appConfig.Consul.Service.Partition,
-			Check: &consul.AgentServiceCheck{
-				HTTP:     s.appConfig.Consul.HealthCheck.URL,
-				Interval: s.appConfig.Consul.HealthCheck.Interval,
-				Timeout:  s.appConfig.Consul.HealthCheck.Timeout,
-			},
-		},
+		registration,
 		consul.ServiceRegisterOpts{
 			ReplaceExistingChecks: s.appConfig.Consul.Server.ReplaceExistingChecks,
 			Token:                 s.appConfig.Consul.Server.Token,

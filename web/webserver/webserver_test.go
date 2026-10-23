@@ -71,3 +71,21 @@ func TestConsulDeregistrationUsesTheToken(t *testing.T) {
 	assert.Equal(t, "/v1/agent/service/deregister/minijob-1", got[1].path)
 	assert.Equal(t, "secret", got[1].token)
 }
+
+func TestConsulHealthCheckSettings(t *testing.T) {
+	// The HTTP check was registered even with healthCheck.enable false, and without its
+	// checkId (Consul made one up).
+	requests := fakeConsulAgent(t)
+	require.NoError(t, consulServer(true).RegisterConsul())
+	require.NoError(t, consulServer(false).RegisterConsul())
+	got := requests()
+	require.Len(t, got, 2)
+	assert.Equal(t, map[string]interface{}{
+		"CheckID":  "alive",
+		"HTTP":     "http://127.0.0.1:8080/healthcheck",
+		"Interval": "10s",
+		"Timeout":  "5s",
+	}, got[0].body["Check"])
+	assert.Nil(t, got[1].body["Check"])
+	assert.Equal(t, "minijob-1", got[1].body["ID"])
+}
