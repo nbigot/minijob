@@ -1,14 +1,17 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/nbigot/minijob/constants"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/web/apierror"
+	"github.com/valyala/fasthttp"
 )
 
 func GetJobUUIDFromParameter(c *fiber.Ctx) (job.JobUUID, *apierror.APIError) {
@@ -85,4 +88,61 @@ func GetUintParameterFromQuery(c *fiber.Ctx, name string, defaultValue uint, min
 	}
 
 	return value, nil
+}
+
+// DecodedBody returns the request body decoded according to its Content-Encoding, as
+// c.Body() does (same encodings, decoded in the order listed; an unknown encoding ends the
+// decoding; a body that cannot be decoded is replaced by the error message), but a decoded
+// body larger than maxSize is refused with fasthttp.ErrBodyTooLarge. c.Body() decodes
+// without a limit: a few kilobytes of nested gzip ("gzip, gzip") made the server allocate
+// gigabytes, while the body limit of the server only applies to the bytes received.
+func DecodedBody(c *fiber.Ctx, maxSize int) ([]byte, error) {
+	req := c.Request()
+	encodingHeader := ""
+	for key, value := range req.Header.All() {
+		if string(key) == fiber.HeaderContentEncoding {
+			encodingHeader = string(value)
+		}
+	}
+	if encodingHeader == "" {
+		return req.Body(), nil
+	}
+
+	encodings := strings.Split(encodingHeader, ",")
+	var original, body []byte
+	defer func() {
+		// each encoding is decoded from the request body: put the received body back
+		if original != nil {
+			req.SetBodyRaw(original)
+		}
+	}()
+	for i, encoding := range encodings {
+		var err error
+		switch strings.TrimLeft(encoding, " ") {
+		case "gzip":
+			body, err = req.BodyGunzipWithLimit(maxSize)
+		case "br", "brotli":
+			body, err = req.BodyUnbrotliWithLimit(maxSize)
+		case "deflate":
+			body, err = req.BodyInflateWithLimit(maxSize)
+		default:
+			if len(encodings) == 1 {
+				return req.Body(), nil
+			}
+			return body, nil
+		}
+		if errors.Is(err, fasthttp.ErrBodyTooLarge) {
+			return nil, err
+		}
+		if err != nil {
+			return []byte(err.Error()), nil
+		}
+		if i < len(encodings)-1 {
+			if original == nil {
+				original = append([]byte{}, req.Body()...)
+			}
+			req.SetBodyRaw(body)
+		}
+	}
+	return body, nil
 }
