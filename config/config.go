@@ -113,6 +113,30 @@ type Config struct {
 	Consul    ConsulConfig    `yaml:"consul"`
 }
 
+// Visibility timeouts (in seconds) when the configuration has none: those of the templates.
+const (
+	defaultVisibilityTimeout = 60
+	maxVisibilityTimeout     = 86400
+)
+
+// setVisibilityTimeouts gives values to the visibility timeouts missing from the
+// configuration: when they were 0, a job pulled without visibility timeout was failed at the
+// next check, and a pull with one was refused. The default visibility timeout is at most
+// the maximum.
+func (c *Config) setVisibilityTimeouts() error {
+	if c.Jobs.MaxVisibilityTimeout == 0 {
+		c.Jobs.MaxVisibilityTimeout = maxVisibilityTimeout
+	}
+	if c.Jobs.DefaultVisibilityTimeout == 0 {
+		c.Jobs.DefaultVisibilityTimeout = min(defaultVisibilityTimeout, c.Jobs.MaxVisibilityTimeout)
+	}
+	if c.Jobs.DefaultVisibilityTimeout > c.Jobs.MaxVisibilityTimeout {
+		return fmt.Errorf("jobs.defaultVisibilityTimeout (%d) is greater than jobs.maxVisibilityTimeout (%d)",
+			c.Jobs.DefaultVisibilityTimeout, c.Jobs.MaxVisibilityTimeout)
+	}
+	return nil
+}
+
 func LoadConfig(filename string) (*Config, error) {
 	var configuration Config
 
@@ -135,6 +159,9 @@ func LoadConfig(filename string) (*Config, error) {
 	err = yaml.NewDecoder(file).Decode(&configuration)
 	if err != nil {
 		return nil, fmt.Errorf("error while parsing configuration file %s : %s", filename, err.Error())
+	}
+	if err := configuration.setVisibilityTimeouts(); err != nil {
+		return nil, fmt.Errorf("invalid configuration file %s : %s", filename, err.Error())
 	}
 
 	if err := log.InitLogger(&configuration.LoggerConfig); err != nil {
