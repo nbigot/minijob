@@ -64,6 +64,9 @@ Edit the file *config-templates/standard/config/config.yaml*
 
 Pay attention to the directory paths in the config file.
 
+The retry delays (`jobs.retryPolicy.backoffStrategy`) are in milliseconds, the visibility
+timeouts in seconds: see the comments of the template.
+
 
 #### Run minijob
 
