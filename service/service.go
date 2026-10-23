@@ -207,20 +207,8 @@ func (svc *Service) CreateJob(payload []byte) (*job.Job, error) {
 	defer svc.mu.Unlock()
 
 	// check if a job can be created
-	if svc.conf.Jobs.MaxAllowedJobs > 0 && uint(len(svc.jobs)) >= svc.conf.Jobs.MaxAllowedJobs {
-		err := errors.New("cannot create job, limit reached")
-		svc.logger.Error(
-			"Cannot create job",
-			zap.String("topic", "service"),
-			zap.String("method", "CreateJob"),
-			zap.Error(err),
-		)
-		return nil, &apierror.APIError{
-			Message:  "cannot create job",
-			Code:     constants.ErrorCantCreateJob,
-			HttpCode: fiber.StatusServiceUnavailable,
-			Err:      err,
-		}
+	if apiErr := svc.checkMaxAllowedJobsLocked("CreateJob"); apiErr != nil {
+		return nil, apiErr
 	}
 
 	if decodeErr != nil {
@@ -234,6 +222,26 @@ func (svc *Service) CreateJob(payload []byte) (*job.Job, error) {
 	}
 
 	return svc.finalizeJobCreationLocked(j)
+}
+
+// checkMaxAllowedJobsLocked returns an error when jobs.maxAllowedJobs jobs exist.
+func (svc *Service) checkMaxAllowedJobsLocked(method string) *apierror.APIError {
+	if svc.conf.Jobs.MaxAllowedJobs == 0 || uint(len(svc.jobs)) < svc.conf.Jobs.MaxAllowedJobs {
+		return nil
+	}
+	err := errors.New("cannot create job, limit reached")
+	svc.logger.Error(
+		"Cannot create job",
+		zap.String("topic", "service"),
+		zap.String("method", method),
+		zap.Error(err),
+	)
+	return &apierror.APIError{
+		Message:  "cannot create job",
+		Code:     constants.ErrorCantCreateJob,
+		HttpCode: fiber.StatusServiceUnavailable,
+		Err:      err,
+	}
 }
 
 // finalizeJobCreationLocked adds a new job and schedules it. It returns the job as it was
@@ -887,6 +895,11 @@ func (svc *Service) CloneJob(jobUUID job.JobUUID) (*job.Job, error) {
 		)
 
 		return nil, &apiErr
+	}
+
+	// the clone is a new job: same limit as a created job
+	if apiErr := svc.checkMaxAllowedJobsLocked("CloneJob"); apiErr != nil {
+		return nil, apiErr
 	}
 
 	clone := j.Clone()

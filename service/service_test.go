@@ -532,6 +532,34 @@ func TestBackendMaxJobsIsEnforced(t *testing.T) {
 	assert.Equal(t, uint(3), svc.GetJobsCount(), "no job is added beyond the limit")
 }
 
+func TestMaxAllowedJobsIsEnforcedOnClone(t *testing.T) {
+	// Cloning a job created jobs beyond jobs.maxAllowedJobs.
+	svc, err := CreateAndInitService(testConfig(t, "    maxAllowedJobs: 0 ", "    maxAllowedJobs: 2 "), "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Stop() })
+	first := createJob(t, svc, `{"properties":{}}`)
+	_, err = svc.CloneJob(first)
+	require.NoError(t, err)
+
+	for _, create := range []func() error{
+		func() error { _, err := svc.CreateJob([]byte(`{"properties":{}}`)); return err },
+		func() error { _, err := svc.CloneJob(first); return err },
+	} {
+		var apiErr *apierror.APIError
+		require.ErrorAs(t, create(), &apiErr)
+		assert.Equal(t, 503, apiErr.HttpCode)
+		assert.Equal(t, constants.ErrorCantCreateJob, apiErr.Code)
+		assert.Equal(t, "cannot create job", apiErr.Message)
+	}
+	assert.Equal(t, uint(2), svc.GetJobsCount())
+
+	// an unknown job is still reported as such
+	var apiErr *apierror.APIError
+	_, err = svc.CloneJob(job.JobUUID{})
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, constants.ErrorCantCloneJob, apiErr.Code)
+}
+
 func TestVisibilityTimeoutChangeIsSaved(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := CreateAndInitService(persistentConfig(t, dir), "test")
