@@ -65,6 +65,73 @@ func TestSchemasThatMakeTheValidatorPanicAreRefused(t *testing.T) {
 	}
 }
 
+// validationErrors validates the body with the schema and returns the errors as "path: message".
+func validationErrors(t *testing.T, schema, body string) []string {
+	t.Helper()
+	w, err := initSchema(t, schemaFile(t, schema))
+	require.NoError(t, err, schema)
+	keyErrors, err := w.validateJSON([]byte(body))
+	require.NoError(t, err, schema)
+	var errs []string
+	for _, e := range keyErrors {
+		errs = append(errs, e.PropertyPath+": "+e.Message)
+	}
+	return errs
+}
+
+func TestSchemaRefLoopsEnd(t *testing.T) {
+	// A "$ref" that comes back to a schema being evaluated on the same value made the
+	// validator recurse until the stack overflowed, a fatal error that stopped the server.
+	// Such a loop adds no constraint.
+	for _, c := range []struct {
+		schema, body string
+		errors       []string
+	}{
+		{`{"$ref": "#"}`, `{"a": 1}`, nil},
+		{`{"$ref": ""}`, `{"a": 1}`, nil},
+		{`{"$ref": null}`, `{"a": 1}`, nil},
+		{`{"$ref": "%23"}`, `1`, nil},
+		{`{"$ref": "#", "type": "object"}`, `1`, []string{"/: type should be object, got integer"}},
+		{`{"$defs": {"a": {"$ref": "#/$defs/a"}}, "$ref": "#/$defs/a"}`, `1`, nil},
+		{`{"$ref": "#/properties/a", "properties": {"a": {"$ref": "#/properties/a"}}}`, `{"a": 1}`, nil},
+		{`{"$defs": {"a": {"$ref": "#/$defs/b"}, "b": {"$ref": "#/$defs/a", "minimum": 2}}, "properties": {"x": {"$ref": "#/$defs/a"}}}`,
+			`{"x": 1}`, []string{"/x: must be greater than or equal to 2"}},
+		{`{"allOf": [{"$ref": "#"}], "anyOf": [{"$ref": "#"}], "required": ["a"]}`, `{}`, []string{`/: "a" value is required`}},
+		{`{"not": {"$ref": "#"}}`, `1`, []string{"/: result was valid, ('not') expected invalid"}},
+		{`{"anyOf": [{"type": "string"}, {"$ref": "#"}]}`, `1`, nil},
+		{`{"oneOf": [{"type": "string"}, {"$ref": "#"}]}`, `"a"`, []string{"/: matched more than one specified OneOf schemas"}},
+		{`{"dependentSchemas": {"a": {"$ref": "#"}}}`, `{"a": 1}`, nil},
+		{`{"if": {"$ref": "#"}, "then": {"maximum": 0}}`, `1`, []string{"/: must be less than or equal to 0"}},
+		{`{"$defs": {"a": {"$anchor": "a", "$ref": "#a"}}, "$ref": "#/$defs/a"}`, `1`, nil},
+		{`{"$id": "http://example.test/loop.json", "$ref": "http://example.test/loop.json"}`, `1`, nil},
+		// a recursion through the document still works: the value changes at each step
+		{`{"type": "object", "required": ["n"], "properties": {"child": {"$ref": "#"}}}`,
+			`{"n": 1, "child": {"n": 2, "child": {}}}`, []string{`/child/child: "n" value is required`}},
+		{`{"items": {"$ref": "#"}, "type": "array"}`, `[[], [1]]`, []string{"/1/0: type should be array, got integer"}},
+	} {
+		assert.Equal(t, c.errors, validationErrors(t, c.schema, c.body), c.schema)
+	}
+}
+
+func TestSchemaRefLoopOverHTTP(t *testing.T) {
+	// The first job created stopped the server.
+	app := schemaServer(t, `{"$ref": "#", "required": ["properties"]}`)
+	for i := 0; i < 2; i++ {
+		status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{"properties":{}}`)
+		assert.Equal(t, 200, status, body)
+	}
+	status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{}`)
+	assert.Equal(t, 400, status, body)
+	assert.Contains(t, body, `"tag":"\"properties\" value is required"`)
+}
+
+func TestSchemaRefKeywordOrder(t *testing.T) {
+	// "$ref" is still evaluated before "$recursiveRef" (the order of the errors on a path).
+	assert.Equal(t, []string{"/: type should be string, got boolean", "/: type should be number, got boolean"},
+		validationErrors(t, `{"$recursiveRef": "#/$defs/n", "$ref": "#/$defs/s",
+			"$defs": {"s": {"type": "string"}, "n": {"type": "number"}}}`, `true`))
+}
+
 func TestSchemasThatTheValidatorHandlesAreAccepted(t *testing.T) {
 	paths := []string{
 		filepath.Join("..", "config-templates", "standard", "config", "schema.json"),

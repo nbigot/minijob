@@ -232,7 +232,7 @@ func (w *WebAPIServer) validateJSON(payload []byte) ([]jsonschema.KeyError, erro
 func (w *WebAPIServer) validateBytes(payload []byte) ([]jsonschema.KeyError, error) {
 	w.schemaMu.Lock()
 	defer w.schemaMu.Unlock() // also when the validator panics
-	return w.schema.ValidateBytes(noFetchContext, payload)
+	return w.schema.ValidateBytes(withRefGuard(noFetchContext), payload)
 }
 
 // recoverPanics answers 500 when a request handler panics: the panic ended the server.
@@ -258,10 +258,16 @@ var registerSchemaKeywordsOnce sync.Once
 // registerSchemaKeywords loads the JSON schema keywords once, with the draft-07 keyword
 // "definitions" as an alias of "$defs": the validator lists "definitions" as unsupported,
 // so every "$ref": "#/definitions/..." failed to resolve and rejected every request.
+// "$ref" does not follow a reference that loops (loopSafeRef).
 func registerSchemaKeywords() {
 	registerSchemaKeywordsOnce.Do(func() {
 		jsonschema.LoadDraft2019_09()
+		// Keywords of the same order run in their registration order, and registering a
+		// keyword again moves it to the end: "$recursiveRef" is registered again after a
+		// new keyword, so that it still runs after "$ref".
+		jsonschema.RegisterKeyword("$ref", newLoopSafeRef)
 		jsonschema.RegisterKeyword("definitions", jsonschema.NewDefs)
+		jsonschema.RegisterKeyword("$recursiveRef", jsonschema.NewRecursiveRef)
 	})
 }
 
