@@ -1,7 +1,7 @@
 FROM golang:1.27.2 AS build
 # Version reported by a plain `docker build` (.git is not in the build context), to update
 # with each release. docker-buid.sh passes the latest git tag instead.
-ARG PROGRAM_VERSION=v1.1.1
+ARG PROGRAM_VERSION=v1.1.2
 WORKDIR /go/src
 COPY . .
 ENV CGO_ENABLED=0
