@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/valyala/fasthttp"
 )
 
 func TestCreateJobContentType(t *testing.T) {
@@ -31,6 +34,83 @@ func TestCreateJobContentType(t *testing.T) {
 		status, body := send(t, app, "POST", "/api/v1/job/", ct, `{"properties":{}}`)
 		assert.Equal(t, 400, status, "%q: %s", ct, body)
 		assert.Contains(t, body, `"code":1024`, ct)
+	}
+}
+
+// sendEncoded sends a job creation with the given Content-Encoding.
+func sendEncoded(t *testing.T, app *fiber.App, encoding string, body []byte) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/job/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", encoding)
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	b, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(b)
+}
+
+func gzipped(data []byte) []byte {
+	return fasthttp.AppendGzipBytesLevel(nil, data, fasthttp.CompressBestCompression)
+}
+
+func TestCreateJobDecodedBodyLimit(t *testing.T) {
+	// The body limit applies to the decoded body too: a few kilobytes of nested gzip
+	// could make the server allocate gigabytes.
+	app, svc := newTestServer(t)
+	limit := GetFiberConfig().BodyLimit
+	job := func(size int) []byte {
+		const overhead = len(`{"properties":{"x":""}}`)
+		return []byte(`{"properties":{"x":"` + strings.Repeat("a", size-overhead) + `"}}`)
+	}
+	tooLarge := job(limit + 1)
+	for _, c := range []struct {
+		encoding string
+		body     []byte
+	}{
+		{"gzip", gzipped(tooLarge)},
+		{"gzip, gzip", gzipped(gzipped(tooLarge))},
+		{"deflate", fasthttp.AppendDeflateBytes(nil, tooLarge)},
+		{"br", fasthttp.AppendBrotliBytes(nil, tooLarge)},
+		{"brotli", fasthttp.AppendBrotliBytes(nil, tooLarge)},
+	} {
+		status, body := sendEncoded(t, app, c.encoding, c.body)
+		if assert.Equal(t, 413, status, c.encoding) {
+			assert.Equal(t, "Request Entity Too Large", body, c.encoding)
+		}
+	}
+	assert.Equal(t, uint(0), svc.GetJobsCount())
+
+	status, _ := sendEncoded(t, app, "gzip", gzipped(job(limit)))
+	assert.Equal(t, 200, status, "a decoded body at the limit is accepted")
+	status, body := sendEncoded(t, app, "gzip, gzip", gzipped(gzipped([]byte(`{"properties":{"a":1}}`))))
+	assert.Equal(t, 200, status, body)
+	assert.Contains(t, body, `"properties":{"a":1}`)
+}
+
+func TestCreateJobContentEncodingLikeFiber(t *testing.T) {
+	// The answers of c.Body() are kept: a single unknown encoding leaves the body as is
+	// (names are case-sensitive), an unknown encoding after another ends the decoding, and
+	// a body that cannot be decoded is replaced by the error message.
+	app, _ := newTestServer(t)
+	job := []byte(`{"properties":{"a":1}}`)
+	for _, c := range []struct {
+		encoding string
+		body     []byte
+		status   int
+	}{
+		{"identity", job, 200},
+		{"GZIP", job, 200},
+		{"GZIP", gzipped(job), 400},
+		{"gzip, identity", gzipped(job), 200},
+		{"identity, gzip", gzipped(job), 400},
+		{" gzip", gzipped(job), 200},
+		{"gzip", job, 400},
+		{"deflate", fasthttp.AppendDeflateBytes(nil, job), 200},
+		{"br", fasthttp.AppendBrotliBytes(nil, job), 200},
+	} {
+		status, body := sendEncoded(t, app, c.encoding, c.body)
+		assert.Equal(t, c.status, status, "%q: %s", c.encoding, body)
 	}
 }
 

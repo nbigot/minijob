@@ -273,7 +273,13 @@ func (w *WebAPIServer) CreateJob(c *fiber.Ctx) error {
 		return apiErr.HTTPResponse(c)
 	}
 
-	payload := c.Body()
+	payload, err := DecodedBody(c, c.App().Config().BodyLimit)
+	if err != nil {
+		// the decoded body is larger than the body limit: same answer as a received body
+		// that is too large
+		c.Context().SetConnectionClose()
+		return fiber.ErrRequestEntityTooLarge
+	}
 
 	// validate request body against the json schema
 	if w.appConfig.Jobs.JsonSchema.Enable {
