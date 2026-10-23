@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -11,6 +13,101 @@ import (
 
 // Workarounds for bugs of the JSON schema validator, qri-io/jsonschema v0.2.1 (its last
 // version).
+
+// refGuardKey is the context key of the references being followed by one validation.
+type refGuardKey struct{}
+
+type refGuard struct {
+	followed []*followedRef
+}
+
+// followedRef is a reference being followed on the value at location.
+type followedRef struct {
+	ref      *loopSafeRef
+	location string
+	loops    bool // the schema it leads to was already being evaluated on the value
+}
+
+// withRefGuard returns the context of one validation.
+func withRefGuard(ctx context.Context) context.Context {
+	return context.WithValue(ctx, refGuardKey{}, &refGuard{})
+}
+
+// loopSafeRef is the "$ref" keyword of the validator, except that a reference is not
+// followed again while it is being followed on the same value. The validator followed it
+// until the stack overflowed, a fatal error that stopped the server: {"$ref": "#"}, a
+// "$defs" entry that refers to itself... A recursion through "properties" or "items"
+// still works: the value changes at each step.
+//
+// When a reference comes back, the reference followed last led to a schema that was already
+// being evaluated on the value: that reference adds no constraint, so what was evaluated
+// through it (errors, evaluated properties) is undone, as if it had been skipped.
+type loopSafeRef struct {
+	jsonschema.Ref
+}
+
+func newLoopSafeRef() jsonschema.Keyword {
+	return new(loopSafeRef)
+}
+
+// ValidateKeyword implements the Keyword interface for loopSafeRef
+func (r *loopSafeRef) ValidateKeyword(ctx context.Context, currentState *jsonschema.ValidationState, data interface{}) {
+	guard, _ := ctx.Value(refGuardKey{}).(*refGuard)
+	if guard == nil {
+		r.Ref.ValidateKeyword(ctx, currentState, data)
+		return
+	}
+	location := currentState.InstanceLocation.String()
+	for _, f := range guard.followed {
+		if f.ref == r && f.location == location {
+			guard.followed[len(guard.followed)-1].loops = true
+			return
+		}
+	}
+
+	before := saveState(currentState)
+	f := &followedRef{ref: r, location: location}
+	guard.followed = append(guard.followed, f)
+	r.Ref.ValidateKeyword(ctx, currentState, data)
+	guard.followed = guard.followed[:len(guard.followed)-1]
+	if f.loops {
+		before.restore(currentState)
+	}
+}
+
+// savedState is what following a reference changes in the validation state.
+type savedState struct {
+	errors                    int
+	evaluated, localEvaluated map[string]bool
+	lastIndex, localLastIndex int
+}
+
+func saveState(st *jsonschema.ValidationState) savedState {
+	return savedState{
+		errors:         len(*st.Errs),
+		evaluated:      maps.Clone(*st.EvaluatedPropertyNames),
+		localEvaluated: maps.Clone(*st.LocalEvaluatedPropertyNames),
+		lastIndex:      st.LastEvaluatedIndex,
+		localLastIndex: st.LocalLastEvaluatedIndex,
+	}
+}
+
+func (s savedState) restore(st *jsonschema.ValidationState) {
+	*st.Errs = (*st.Errs)[:s.errors]
+	// the sets may be shared with other states: they are restored in place
+	restoreSet(*st.EvaluatedPropertyNames, s.evaluated)
+	restoreSet(*st.LocalEvaluatedPropertyNames, s.localEvaluated)
+	st.LastEvaluatedIndex = s.lastIndex
+	st.LocalLastEvaluatedIndex = s.localLastIndex
+}
+
+func restoreSet(set, saved map[string]bool) {
+	maps.DeleteFunc(set, func(key string, _ bool) bool {
+		_, found := saved[key]
+		return !found
+	})
+	maps.Copy(set, saved)
+}
 
 // checkSchema returns an error for the parts of a schema that make the validator panic
 // when it validates a body, instead of rejecting the body:
