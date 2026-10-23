@@ -1093,14 +1093,20 @@ func (svc *Service) failJobLocked(jobUUID job.JobUUID) (reachedMaxRetry bool, er
 	// The job has not yet failed too many times
 	delay := svc.conf.Jobs.RetryPolicy.BackoffStrategy.ComputeDelay(j.GetCountFaillures())
 
+	// compute the next retry time (current time + duration between retry)
+	now := time.Now().UnixMilli()
+
 	// Check if the minimum duration between each retry is 0
 	if delay == 0 {
 		// Retry the job immediately
-		return false, svc.retryJobLocked(j)
+		if err := svc.retryJobLocked(j); err == nil {
+			return false, nil
+		}
+		// a resource of the job is held by another job (it was released by the admin
+		// API): the job waits in the retry queue until it is free
+		return false, svc.retryJobLaterLocked(j, now)
 	}
 
-	// compute the next retry time (current time + duration between retry)
-	now := time.Now().UnixMilli()
 	nextRetryTime := now + delay.Milliseconds()
 	return false, svc.retryJobLaterLocked(j, nextRetryTime)
 }
