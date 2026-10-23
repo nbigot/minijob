@@ -413,6 +413,59 @@ func TestDuplicateResourceNames(t *testing.T) {
 	assert.Empty(t, svc.GetLockedResources())
 }
 
+func TestRestoredLocksAreCountedOnce(t *testing.T) {
+	// After a restart, the count of locked resources of a topic was the sum of the lists of
+	// resources of its queued and running jobs: a resource claimed by two jobs (a running job
+	// whose lock was released by the admin API, and the queued job that took it) or listed
+	// twice was counted twice, so the count never came back to 0. The owner of a resource
+	// claimed by two jobs changed from one start to the next (map order): it is the last job
+	// in creation order.
+	dir := t.TempDir()
+	ids := sequentialIDs(3)
+	now := time.Now().UnixMilli()
+	stored := map[string]*job.Job{}
+	add := func(id job.JobUUID, resources job.ResourceList, events ...string) {
+		j := &job.Job{Topic: "t", JobProperties: job.JobProperties{}, LockResources: resources, VisibilityTimeout: 3600}
+		j.Init(id, now)
+		for _, e := range events {
+			j.AddHistoryEvent(e, now)
+		}
+		stored[id.String()] = j
+	}
+	running := []string{job.JobEventPending, job.JobEventEnqueue, job.JobEventStart}
+	add(ids[0], job.ResourceList{"r", "s"}, running...)
+	add(ids[1], job.ResourceList{"r"}, job.JobEventPending, job.JobEventEnqueue)
+	add(ids[2], job.ResourceList{"u", "u"}, running...)
+	data, err := json.Marshal(map[string]interface{}{"jobs": stored})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "jobs.json"), data, 0o600))
+
+	start := func() *Service {
+		svc, err := CreateAndInitService(persistentConfig(t, dir), "test")
+		require.NoError(t, err)
+		return svc
+	}
+	lockedCount := func(svc *Service) uint {
+		return svc.GetMetrics().GetMetricByTopic("t").ResourcesLockedCount
+	}
+	for i := 0; i < 10; i++ {
+		svc := start()
+		assert.Equal(t, job.LockedResources{"r": ids[1], "s": ids[0], "u": ids[2]}, svc.GetLockedResources())
+		assert.Equal(t, uint(3), lockedCount(svc))
+		require.NoError(t, svc.Stop())
+	}
+
+	svc := start()
+	t.Cleanup(func() { _ = svc.Stop() })
+	require.NoError(t, svc.SetJobAsSuccessful(ids[0]))
+	assert.Equal(t, uint(2), lockedCount(svc), "s is released, r is held by another job")
+	require.NoError(t, svc.SetJobAsSuccessful(ids[2]))
+	pullOne(t, svc, ids[1])
+	require.NoError(t, svc.SetJobAsSuccessful(ids[1]))
+	assert.Empty(t, svc.GetLockedResources())
+	assert.Equal(t, uint(0), lockedCount(svc))
+}
+
 func TestCreatedJobIsScheduledAfterLoad(t *testing.T) {
 	// A job saved between its creation and its first scheduling (only a CREATE event).
 	dir := t.TempDir()
