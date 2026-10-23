@@ -197,6 +197,9 @@ func (w *WebAPIServer) Init() error {
 		if err := w.schema.UnmarshalJSON(schemaBytes); err != nil {
 			return fmt.Errorf("error unmarshaling schema: %v", err)
 		}
+		if err := checkSchema(schemaBytes); err != nil {
+			return fmt.Errorf("schema not supported by the validator: %v", err)
+		}
 	} else {
 		// Because json schema validation is disabled, set schema to be empty
 		// Needed when server restarts and config has changed
