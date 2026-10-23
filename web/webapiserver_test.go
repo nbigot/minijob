@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/nbigot/minijob/config"
+	"github.com/nbigot/minijob/job"
 	"github.com/qri-io/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,6 +132,28 @@ func TestSchemaRefKeywordOrder(t *testing.T) {
 	assert.Equal(t, []string{"/: type should be string, got boolean", "/: type should be number, got boolean"},
 		validationErrors(t, `{"$recursiveRef": "#/$defs/n", "$ref": "#/$defs/s",
 			"$defs": {"s": {"type": "string"}, "n": {"type": "number"}}}`, `true`))
+}
+
+func TestTemplateSchemasAcceptEveryJobField(t *testing.T) {
+	// The templates and the Docker image validate the jobs with these schemas: a job with
+	// a callback URL was refused.
+	body, err := json.Marshal(job.JobRequest{
+		Topic:         "t",
+		JobProperties: job.JobProperties{"a": 1},
+		LockResources: job.ResourceList{"r"},
+		CallbackURL:   "https://example.test/hook",
+	})
+	require.NoError(t, err)
+	for _, path := range []string{
+		filepath.Join("..", "config-templates", "standard", "config", "schema.json"),
+		filepath.Join("..", "config-templates", "docker", "config", "schema.json"),
+	} {
+		w, err := initSchema(t, path)
+		require.NoError(t, err, path)
+		keyErrors, err := w.validateJSON(body)
+		require.NoError(t, err, path)
+		assert.Empty(t, keyErrors, "%s: %s", path, body)
+	}
 }
 
 func TestSchemasThatTheValidatorHandlesAreAccepted(t *testing.T) {
