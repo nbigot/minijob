@@ -13,11 +13,13 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/pprof"
 	"github.com/gofiber/swagger"
 	"github.com/qri-io/jsonschema"
+	"go.uber.org/zap"
 
 	"github.com/nbigot/minijob/config"
 	"github.com/nbigot/minijob/constants"
 	_ "github.com/nbigot/minijob/docs"
 	"github.com/nbigot/minijob/fiberprometheus"
+	"github.com/nbigot/minijob/log"
 	"github.com/nbigot/minijob/service"
 )
 
@@ -36,6 +38,7 @@ func (w *WebAPIServer) GetFiberPrometheus() *fiberprometheus.FiberPrometheus {
 }
 
 func (w *WebAPIServer) AddRoutes(app *fiber.App) {
+	app.Use(recoverPanics)
 	app.Get("/", w.Home)
 
 	// Optimization: order of routes registration matters for performance
@@ -216,13 +219,35 @@ var noFetchContext = func() context.Context {
 // The errors are sorted by field path (the validator's order changed from one request to
 // the next); errors on the same path keep their order.
 func (w *WebAPIServer) validateJSON(payload []byte) ([]jsonschema.KeyError, error) {
-	w.schemaMu.Lock()
-	keyErrors, err := w.schema.ValidateBytes(noFetchContext, payload)
-	w.schemaMu.Unlock()
+	keyErrors, err := w.validateBytes(payload)
 	sort.SliceStable(keyErrors, func(i, j int) bool {
 		return keyErrors[i].PropertyPath < keyErrors[j].PropertyPath
 	})
 	return keyErrors, err
+}
+
+func (w *WebAPIServer) validateBytes(payload []byte) ([]jsonschema.KeyError, error) {
+	w.schemaMu.Lock()
+	defer w.schemaMu.Unlock() // also when the validator panics
+	return w.schema.ValidateBytes(noFetchContext, payload)
+}
+
+// recoverPanics answers 500 when a request handler panics: the panic ended the server.
+func recoverPanics(c *fiber.Ctx) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Error(
+				"Panic while answering a request",
+				zap.String("topic", "server"),
+				zap.String("method", "recoverPanics"),
+				zap.String("request", c.Method()+" "+c.Path()),
+				zap.Any("panic", r),
+				zap.Stack("stack"),
+			)
+			err = fiber.ErrInternalServerError
+		}
+	}()
+	return c.Next()
 }
 
 var registerSchemaKeywordsOnce sync.Once
