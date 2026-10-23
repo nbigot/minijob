@@ -371,6 +371,39 @@ func TestDelayedRetryLocksItsResourcesAgain(t *testing.T) {
 	assert.Equal(t, a, svc.GetLockedResources()["r"])
 }
 
+func TestImmediateRetryWaitsForATakenResource(t *testing.T) {
+	// Without retry delay, a failed job is queued again at once, which locks its resources
+	// again. When one of them had been released (admin API) and taken by another job, the
+	// failure answered 412 although it was recorded, and the job stayed "running" in no
+	// queue, never retried. It now waits in the retry queue, as with a retry delay.
+	svc, err := CreateAndInitService(testConfig(t, "            base: 1\n", "            base: 0\n"), "test")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Stop() })
+
+	free := createJob(t, svc, `{"properties":{},"lockResources":["s"]}`)
+	pullOne(t, svc, free)
+	_, err = svc.FailJob(free)
+	require.NoError(t, err)
+	assert.Equal(t, job.JobQueued, stateOf(t, svc, free), "queued again at once")
+
+	a := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	pullOne(t, svc, a)
+	require.NoError(t, svc.UnlockResource("r"))
+	b := createJob(t, svc, `{"properties":{},"lockResources":["r"]}`)
+	require.Equal(t, job.JobQueued, stateOf(t, svc, b))
+	reachedMaxRetry, err := svc.FailJob(a)
+	require.NoError(t, err)
+	assert.False(t, reachedMaxRetry)
+	assert.Equal(t, job.JobHidden, stateOf(t, svc, a))
+	assert.Equal(t, b, svc.GetLockedResources()["r"])
+
+	pullOne(t, svc, b)
+	require.NoError(t, svc.SetJobAsSuccessful(b))
+	svc.AttemptJobRetries()
+	assert.Equal(t, job.JobQueued, stateOf(t, svc, a))
+	assert.Equal(t, a, svc.GetLockedResources()["r"])
+}
+
 func TestDuplicateResourceNames(t *testing.T) {
 	svc := idleService(t)
 	a := createJob(t, svc, `{"properties":{},"lockResources":["r","r","s"]}`)
