@@ -153,8 +153,12 @@ func (s *Server) DeRegisterConsul() error {
 		return nil
 	}
 
-	// Deregister the service with Consul
-	if err := s.consulClient.Agent().ServiceDeregister(s.appConfig.Consul.Service.ID); err != nil {
+	// Deregister the service with Consul (with the token of the registration)
+	err := s.consulClient.Agent().ServiceDeregisterOpts(
+		s.appConfig.Consul.Service.ID,
+		&consul.QueryOptions{Token: s.appConfig.Consul.Server.Token},
+	)
+	if err != nil {
 		s.logger.Error(
 			"Failed to deregister Consul service",
 			zap.String("topic", "server"),
