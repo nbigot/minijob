@@ -49,13 +49,17 @@ func (m *ResourcesManager) UnlockResource(resourceName string) error {
 	return nil
 }
 
+// LockResourcesForJobs locks the resources of the queued and running jobs (loaded jobs).
+// When two jobs claim a resource (the lock of one was released by the admin API and taken by
+// the other), the last one in creation order holds it, at every start.
 func (m *ResourcesManager) LockResourcesForJobs(jobs job.JobMap) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Lock the resources required by the jobs
 	m.lockedResources = job.LockedResources{}
-	for _, j := range jobs {
+	for _, id := range sortedJobIDs(jobs) {
+		j := jobs[id]
 		switch j.GetState() {
 		case job.JobQueued, job.JobRunning:
 			for _, r := range j.LockResources {

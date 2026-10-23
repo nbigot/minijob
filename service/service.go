@@ -166,7 +166,19 @@ func (svc *Service) LoadJobs() error {
 			svc.pqDelayedJobs.Enqueue(j, -j.StartAfter)
 		}
 		svc.eventNotifier.NotifyJobEvent(j, event.ServiceEventJobLoaded)
-		svc.UpdateResourcesLockedCountMetric(j.Topic, int(j.GetCountLockResources()))
+		// registers the topic
+		svc.UpdateResourcesLockedCountMetric(j.Topic, 0)
+	}
+	// the locks held, by topic of their owner: a resource claimed by two jobs, or listed
+	// twice by a job, is locked once
+	lockedCounts := map[string]int{}
+	for _, owner := range svc.resourcesManager.GetLockedResources() {
+		if j := svc.jobs[owner]; j != nil {
+			lockedCounts[j.Topic]++
+		}
+	}
+	for topic, count := range lockedCounts {
+		svc.UpdateResourcesLockedCountMetric(topic, count)
 	}
 	// allow the backend provider to process notifications
 	svc.bp.SetRestoreFlag(false)
