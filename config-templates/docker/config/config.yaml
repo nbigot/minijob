@@ -95,7 +95,7 @@ consul:
         namespace: ""
         partition: ""
     healthCheck:
-        enable: false
+        enable: true  # register this HTTP check with the service
         checkId: "alive"
         interval: "10s"
         timeout: "5s"
