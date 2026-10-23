@@ -376,7 +376,7 @@ func TestImmediateRetryWaitsForATakenResource(t *testing.T) {
 	// again. When one of them had been released (admin API) and taken by another job, the
 	// failure answered 412 although it was recorded, and the job stayed "running" in no
 	// queue, never retried. It now waits in the retry queue, as with a retry delay.
-	svc, err := CreateAndInitService(testConfig(t, "            base: 1\n", "            base: 0\n"), "test")
+	svc, err := CreateAndInitService(testConfig(t, "            base: 1  #", "            base: 0  #"), "test")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Stop() })
 
