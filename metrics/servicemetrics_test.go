@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -1387,4 +1388,24 @@ func TestResourcesMetricsSortedByName(t *testing.T) {
 		got = append(got, m.ResourceName)
 	}
 	assert.Equal(t, want, got)
+}
+
+func TestServiceMetrics_JobStatisticsAllocationsPerTopic(t *testing.T) {
+	// Every 10 seconds, the job statistics allocated two slices of 10,000 durations
+	// (160 KB) for each topic, with or without jobs: the topics of empty pulls (a new one
+	// per request, no job needed) made the server hold about 1.5 GB at 5,000 topics.
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	const topics = 1000
+	for i := range topics {
+		s.AddTopic(fmt.Sprintf("topic-%d", i))
+	}
+	s.UpdateJobStatistics(job.JobMap{})
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	s.UpdateJobStatistics(job.JobMap{})
+	runtime.ReadMemStats(&after)
+	perTopic := (after.TotalAlloc - before.TotalAlloc) / topics
+	t.Logf("%d bytes allocated per topic", perTopic)
+	assert.Less(t, perTopic, uint64(32<<10), "bytes allocated per topic")
 }

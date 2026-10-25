@@ -531,12 +531,11 @@ func (s *ServiceMetrics) UpdateJobStatistics(jm job.JobMap) {
 }
 
 func (s *ServiceMetrics) UpdateJobDurationPercentiles(jm job.JobMap, now int64) {
+	// the durations are appended job by job: most topics have few jobs, or none (the topic
+	// of an empty pull)
 	p := UpdateJobDurationPercentilesByTopic{}
 	for _, topic := range s.Topics {
-		p[topic] = &UpdateJobDurationPercentilesDetail{
-			CompletedJobsDurations: make([]int64, 0, 10000),
-			ActiveJobsDurations:    make([]int64, 0, 10000),
-		}
+		p[topic] = &UpdateJobDurationPercentilesDetail{}
 	}
 
 	for _, job := range jm {
