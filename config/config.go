@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/nbigot/minijob/log"
 	"github.com/nbigot/minijob/retrypolicy"
@@ -156,7 +158,18 @@ func LoadConfig(filename string) (*Config, error) {
 		}
 	}()
 
-	err = yaml.NewDecoder(file).Decode(&configuration)
+	decoder := yaml.NewDecoder(file)
+	err = decoder.Decode(&configuration)
+	if err == nil {
+		// Decode reads one document: the file must end there. When the first key is
+		// indented and the next ones are not, the first document ends after the first key.
+		var rest yaml.Node
+		if err = decoder.Decode(&rest); err == nil {
+			err = errors.New("only one YAML document is allowed")
+		} else if errors.Is(err, io.EOF) {
+			err = nil
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error while parsing configuration file %s : %s", filename, err.Error())
 	}
