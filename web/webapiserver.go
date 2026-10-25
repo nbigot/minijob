@@ -258,7 +258,9 @@ var registerSchemaKeywordsOnce sync.Once
 // registerSchemaKeywords loads the JSON schema keywords once, with the draft-07 keyword
 // "definitions" as an alias of "$defs": the validator lists "definitions" as unsupported,
 // so every "$ref": "#/definitions/..." failed to resolve and rejected every request.
-// "$ref" does not follow a reference that loops (loopSafeRef).
+// "$ref" does not follow a reference that loops (loopSafeRef), and a "$ref" or a
+// "$recursiveRef" to a missing "patternProperties" entry fails instead of panicking
+// (failUnresolvedRef).
 func registerSchemaKeywords() {
 	registerSchemaKeywordsOnce.Do(func() {
 		jsonschema.LoadDraft2019_09()
@@ -267,7 +269,7 @@ func registerSchemaKeywords() {
 		// new keyword, so that it still runs after "$ref".
 		jsonschema.RegisterKeyword("$ref", newLoopSafeRef)
 		jsonschema.RegisterKeyword("definitions", jsonschema.NewDefs)
-		jsonschema.RegisterKeyword("$recursiveRef", jsonschema.NewRecursiveRef)
+		jsonschema.RegisterKeyword("$recursiveRef", newSafeRecursiveRef)
 	})
 }
 

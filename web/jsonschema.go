@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -54,7 +55,7 @@ func newLoopSafeRef() jsonschema.Keyword {
 func (r *loopSafeRef) ValidateKeyword(ctx context.Context, currentState *jsonschema.ValidationState, data interface{}) {
 	guard, _ := ctx.Value(refGuardKey{}).(*refGuard)
 	if guard == nil {
-		r.Ref.ValidateKeyword(ctx, currentState, data)
+		r.validateRef(ctx, currentState, data)
 		return
 	}
 	location := currentState.InstanceLocation.String()
@@ -68,11 +69,56 @@ func (r *loopSafeRef) ValidateKeyword(ctx context.Context, currentState *jsonsch
 	before := saveState(currentState)
 	f := &followedRef{ref: r, location: location}
 	guard.followed = append(guard.followed, f)
-	r.Ref.ValidateKeyword(ctx, currentState, data)
+	r.validateRef(ctx, currentState, data)
 	guard.followed = guard.followed[:len(guard.followed)-1]
 	if f.loops {
 		before.restore(currentState)
 	}
+}
+
+// validateRef runs the "$ref" keyword of the validator (see failUnresolvedRef).
+func (r *loopSafeRef) validateRef(ctx context.Context, currentState *jsonschema.ValidationState, data interface{}) {
+	defer failUnresolvedRef(&r.Ref, currentState, data)
+	r.Ref.ValidateKeyword(ctx, currentState, data)
+}
+
+// safeRecursiveRef is the "$recursiveRef" keyword of the validator (see failUnresolvedRef).
+type safeRecursiveRef struct {
+	jsonschema.RecursiveRef
+}
+
+func newSafeRecursiveRef() jsonschema.Keyword {
+	return new(safeRecursiveRef)
+}
+
+// ValidateKeyword implements the Keyword interface for safeRecursiveRef
+func (r *safeRecursiveRef) ValidateKeyword(ctx context.Context, currentState *jsonschema.ValidationState, data interface{}) {
+	defer failUnresolvedRef(&r.RecursiveRef, currentState, data)
+	r.RecursiveRef.ValidateKeyword(ctx, currentState, data)
+}
+
+// failUnresolvedRef is deferred by the "$ref" and "$recursiveRef" keywords. The validator
+// panics when it resolves a pointer to a missing "patternProperties" entry
+// ("#/patternProperties/x"), which answered 500 to every job with the property: the
+// reference now fails like the other references that do not resolve ("#/$defs/x"), with
+// the same errors. A panic once the reference is resolved goes on.
+//
+// ref is the *jsonschema.Ref or *jsonschema.RecursiveRef: once the validator has found the
+// schema of a reference, it keeps it in its unexported field "resolved".
+func failUnresolvedRef(ref interface{}, currentState *jsonschema.ValidationState, data interface{}) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	fields := reflect.ValueOf(ref).Elem()
+	if !fields.FieldByName("resolved").IsNil() {
+		panic(p)
+	}
+	currentState.AddError(data, "failed to resolve schema for ref "+fields.FieldByName("reference").String())
+	subState := currentState.NewSubState()
+	subState.ClearState()
+	subState.AddError(data, "schema is nil")
+	currentState.UpdateEvaluatedPropsAndItems(subState)
 }
 
 // savedState is what following a reference changes in the validation state.
