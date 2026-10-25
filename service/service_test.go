@@ -20,6 +20,7 @@ import (
 	"github.com/nbigot/minijob/constants"
 	"github.com/nbigot/minijob/job"
 	"github.com/nbigot/minijob/jobbackendprovider/registry"
+	"github.com/nbigot/minijob/metrics"
 	"github.com/nbigot/minijob/web/apierror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -487,6 +488,17 @@ func TestCreatedJobIsScheduledAfterLoad(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Stop() })
 	assert.Equal(t, job.JobQueued, stateOf(t, svc, ids[0]))
 	assert.Equal(t, job.JobDelayed, stateOf(t, svc, ids[1]))
+}
+
+func TestJobStatisticsPanicDoesNotStopTheService(t *testing.T) {
+	// The job statistics run in the loop of the service, where nothing recovered a panic: a
+	// topic that was not a valid Prometheus label stopped the server. The statistics only
+	// feed the metrics: such a failure is logged.
+	svc := idleService(t)
+	createJob(t, svc, `{"topic":"a","properties":{}}`)
+	svc.metrics.(*metrics.ServiceMetrics).AddTopic("\xff")
+	assert.NotPanics(t, svc.UpdateJobStatistics)
+	assert.NotPanics(t, svc.UpdateJobStatistics, "the locks are released")
 }
 
 func TestTopicsListedWithMetricsDisabled(t *testing.T) {

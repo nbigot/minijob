@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/utils"
@@ -22,6 +23,15 @@ func convertJobsToResponses(jobs []*job.Job) []*job.JobResponse {
 		jobResponses = append(jobResponses, j.ToResponse())
 	}
 	return jobResponses
+}
+
+// validUTF8 returns a copy of s where each byte that is not valid UTF-8 is replaced with
+// U+FFFD, as in the strings decoded from JSON (the topic of a job).
+func validUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return strings.Clone(s)
+	}
+	return string([]rune(s))
 }
 
 // GetAllJobs godoc
@@ -480,8 +490,8 @@ func (w *WebAPIServer) GetPullJobRequest(c *fiber.Ctx) (*service.RequestPullJobs
 
 	// topic to pull the job from (if empty pull from any topic)
 	// (copied: c.Query points into a buffer that later requests reuse, and the topic of
-	// an empty pull is kept by the metrics)
-	topic := strings.Clone(c.Query(constants.JobTopicParam))
+	// an empty pull is kept by the metrics, as a Prometheus label: valid UTF-8)
+	topic := validUTF8(c.Query(constants.JobTopicParam))
 
 	// job uuid to pull (if empty pull any job)
 	jobUUID, errApi := GetJobUUIDFromQuery(c)
