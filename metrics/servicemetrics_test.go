@@ -1454,3 +1454,32 @@ func TestServiceMetrics_DeleteAllResetsJobStatusGauges(t *testing.T) {
 	}
 	assert.Equal(t, uint(0), s.GetJobMetricsByStatus().ExistingJobs)
 }
+
+func TestServiceMetrics_LoadedJobsSetJobStatusGauges(t *testing.T) {
+	// The jobs loaded at startup (Redis, jobs file) were counted in /api/v1/metrics/*, but
+	// the job_status gauges of /metrics were not set: after a restart, /metrics had no
+	// job_status series until the next job event of each topic.
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	load := func(topic string, events ...string) {
+		id, _ := uuid.NewV7()
+		j := &job.Job{JobUUID: id, Topic: topic}
+		j.Init(id, 1000)
+		for i, e := range events {
+			j.AddHistoryEvent(e, int64(1001+i))
+		}
+		s.NotifyJobEvent(j, event.ServiceEventJobLoaded)
+	}
+	load("a", job.JobEventPending, job.JobEventEnqueue)
+	load("a", job.JobEventPending, job.JobEventEnqueue, job.JobEventStart)
+	load("b", job.JobEventPending, job.JobEventEnqueue, job.JobEventStart, job.JobEventSuccess)
+
+	series := jobStatusSeries(t, s)
+	assert.Len(t, series, 20)
+	assert.Equal(t, 2.0, series["Existing,a"])
+	assert.Equal(t, 1.0, series["Queued,a"])
+	assert.Equal(t, 1.0, series["Running,a"])
+	assert.Equal(t, 1.0, series["Existing,b"])
+	assert.Equal(t, 1.0, series["Succeeded,b"])
+	assert.Equal(t, 0.0, series["Created,b"])
+}
