@@ -67,3 +67,24 @@ func TestTemplatesRetryDelays(t *testing.T) {
 		assert.Equal(t, time.Minute, backoff.ComputeDelay(10), path)
 	}
 }
+
+func TestConfigFileIsReadToTheEnd(t *testing.T) {
+	// The YAML decoder reads one document: when the first key was indented and the next
+	// ones were not, the first document ended after the first key and the rest of the file
+	// was ignored without an error (in-memory backend, no job limit...).
+	_, err := loadTemplate(t, "\nenvironment: \"loadtest\"\n", "\n    environment: \"loadtest\"\n")
+	assert.ErrorContains(t, err, "error while parsing configuration file")
+	assert.ErrorContains(t, err, "did not find expected <document start>")
+	_, err = loadTemplate(t, "\njobs:\n", "\n---\njobs:\n")
+	assert.ErrorContains(t, err, "only one YAML document is allowed")
+
+	// the end of the document
+	template, err := os.ReadFile(filepath.Join("..", "config-templates", "standard", "config", "config.loadtest.yaml"))
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, append(template, "...\n# end\n"...), 0o600))
+	conf, err := LoadConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "loadtest", conf.Environment)
+	assert.Equal(t, "minijob", conf.LoggerConfig.InitialFields["app"], "the last key")
+}
