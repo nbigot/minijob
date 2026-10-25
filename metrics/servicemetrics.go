@@ -272,6 +272,7 @@ func (s *ServiceMetrics) NotifyJobEvent(j *job.Job, ev event.ServiceEventType) {
 
 	if ev == event.ServiceEventJobLoaded {
 		s.UpdateMetricsFromJobHistory(j)
+		s.Metrics.SetGauges(j.Topic, s.GetMetricByTopic(j.Topic))
 		return
 	}
 
