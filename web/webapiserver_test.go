@@ -134,6 +134,52 @@ func TestSchemaRefKeywordOrder(t *testing.T) {
 			"$defs": {"s": {"type": "string"}, "n": {"type": "number"}}}`, `true`))
 }
 
+func TestSchemaRefToMissingPatternProperty(t *testing.T) {
+	// The validator panicked on a reference to a missing "patternProperties" entry: every
+	// job with the property was answered 500. Such a reference now fails like the other
+	// references that do not resolve (a missing "$defs" entry...).
+	notResolved := func(path, ref string) []string {
+		return []string{path + ": failed to resolve schema for ref " + ref, path + ": schema is nil"}
+	}
+	for _, c := range []struct {
+		schema, body string
+		errors       []string
+	}{
+		{`{"properties": {"a": {"$ref": "#/patternProperties/x"}}, "patternProperties": {"^b": {"type": "string"}}}`,
+			`{"a": 1, "bc": 1}`, append(notResolved("/a", "#/patternProperties/x"), "/bc: type should be string, got integer")},
+		{`{"properties": {"a": {"$ref": "#/properties/b/patternProperties/x/y"}, "b": {"patternProperties": {"^c": {}}}}}`,
+			`{"a": 1}`, notResolved("/a", "#/properties/b/patternProperties/x/y")},
+		{`{"properties": {"a": {"$recursiveRef": "#/patternProperties/x"}}, "patternProperties": {"^b": {}}}`,
+			`{"a": 1}`, notResolved("/a", "#/patternProperties/x")},
+		{`{"$id": "http://example.test/missing-pattern.json", "patternProperties": {"^b": {}},
+			"properties": {"a": {"$ref": "http://example.test/missing-pattern.json#/patternProperties/x"}}}`,
+			`{"a": 1}`, notResolved("/a", "http://example.test/missing-pattern.json#/patternProperties/x")},
+		// as before
+		{`{"properties": {"a": {"$ref": "#/$defs/x"}}}`, `{"a": 1}`, notResolved("/a", "#/$defs/x")},
+		{`{"properties": {"a": {"$ref": "#/patternProperties/^b"}}, "patternProperties": {"^b": {"type": "string"}}}`,
+			`{"a": 1}`, []string{"/a: type should be string, got integer"}},
+		{`{"properties": {"a": {"$ref": "#/patternProperties/x"}}, "patternProperties": {"^b": {}}}`, `{"b": 1}`, nil},
+	} {
+		for i := 0; i < 2; i++ {
+			assert.Equal(t, c.errors, validationErrors(t, c.schema, c.body), c.schema)
+		}
+	}
+
+	app := schemaServer(t, `{"properties":{"a":{"$ref":"#/patternProperties/x"}},"patternProperties":{"^b":{"type":"string"}}}`)
+	for i := 0; i < 2; i++ {
+		status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{"topic":"t","a":1}`)
+		assert.Equal(t, 400, status, body)
+		assert.Contains(t, body, `"tag":"failed to resolve schema for ref #/patternProperties/x"`)
+	}
+	status, body := send(t, app, "POST", "/api/v1/job/", "application/json", `{"topic":"t"}`)
+	assert.Equal(t, 200, status, body)
+
+	// a panic once the reference is resolved goes on (such a schema is refused at startup)
+	w := &WebAPIServer{}
+	require.NoError(t, w.schema.UnmarshalJSON([]byte(`{"$ref": "#/$defs/a", "$defs": {"a": {"enum": []}}}`)))
+	assert.PanicsWithError(t, "runtime error: slice bounds out of range [:-1]", func() { _, _ = w.validateJSON([]byte(`"x"`)) })
+}
+
 func TestTemplateSchemasAcceptEveryJobField(t *testing.T) {
 	// The templates and the Docker image validate the jobs with these schemas: a job with
 	// a callback URL was refused.
