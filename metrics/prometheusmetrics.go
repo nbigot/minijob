@@ -180,7 +180,8 @@ func (m *PrometheusMetrics) ResetAllGauges() {
 			}
 		}
 
-		if status != "" && topic != "" {
+		// (the empty topic is a topic)
+		if status != "" {
 			labels = append(labels, labelPair{status: status, topic: topic})
 		}
 	}

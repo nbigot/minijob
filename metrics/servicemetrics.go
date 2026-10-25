@@ -239,6 +239,7 @@ func (s *ServiceMetrics) NotifyEvent(ev event.ServiceEventType) {
 	switch ev {
 	case event.ServiceEventJobDeletedAll:
 		s.OnDeleteAllJobs()
+		s.Metrics.OnEvent(event.ServiceEvent{Type: ev}, nil)
 	case event.ServiceEventEmptyPollReceived:
 		s.Metrics.OnEvent(event.ServiceEvent{Type: ev}, nil)
 	}
