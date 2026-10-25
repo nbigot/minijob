@@ -127,6 +127,7 @@ func TestServiceMetrics_UpdateResourcesLockedCountMetric(t *testing.T) {
 
 func TestServiceMetrics_NotifyEvent(t *testing.T) {
 	serviceMetrics := NewServiceMetrics(true)
+	require.NoError(t, serviceMetrics.Init())
 
 	// Setup a topic with some metrics
 	topic := "test-topic"
@@ -1408,4 +1409,48 @@ func TestServiceMetrics_JobStatisticsAllocationsPerTopic(t *testing.T) {
 	perTopic := (after.TotalAlloc - before.TotalAlloc) / topics
 	t.Logf("%d bytes allocated per topic", perTopic)
 	assert.Less(t, perTopic, uint64(32<<10), "bytes allocated per topic")
+}
+
+// jobStatusSeries returns the value of each series of the job_status gauge, by "status,topic".
+func jobStatusSeries(t *testing.T, s *ServiceMetrics) map[string]float64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric)
+	go func() {
+		s.Metrics.JobsStatusGauge.Collect(ch)
+		close(ch)
+	}()
+	series := map[string]float64{}
+	for metric := range ch {
+		pb := &dto.Metric{}
+		require.NoError(t, metric.Write(pb))
+		labels := map[string]string{}
+		for _, label := range pb.Label {
+			labels[label.GetName()] = label.GetValue()
+		}
+		series[labels["status"]+","+labels["topic"]] = pb.Gauge.GetValue()
+	}
+	return series
+}
+
+func TestServiceMetrics_DeleteAllResetsJobStatusGauges(t *testing.T) {
+	// Deleting all the jobs reset the counters of /api/v1/metrics/*, not the job_status
+	// gauges of /metrics: a topic kept the counts of its deleted jobs until its next job
+	// event. The series stay, with 0, the empty topic included.
+	s := NewServiceMetrics(true)
+	require.NoError(t, s.Init())
+	for _, topic := range []string{"z", "z", ""} {
+		newJobWithEvents(s, topic, nil, job.JobEventPending, job.JobEventEnqueue)
+	}
+	before := jobStatusSeries(t, s)
+	assert.Len(t, before, 20)
+	assert.Equal(t, 2.0, before["Queued,z"])
+	assert.Equal(t, 1.0, before["Existing,"])
+
+	s.NotifyEvent(event.ServiceEventJobDeletedAll)
+	after := jobStatusSeries(t, s)
+	assert.Len(t, after, 20)
+	for series, value := range after {
+		assert.Equal(t, 0.0, value, series)
+	}
+	assert.Equal(t, uint(0), s.GetJobMetricsByStatus().ExistingJobs)
 }
