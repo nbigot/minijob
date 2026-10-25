@@ -1389,6 +1389,19 @@ func (svc *Service) CheckJobsRetention() {
 }
 
 func (svc *Service) UpdateJobStatistics() {
+	// The statistics only feed the metrics: a panic there is logged, it does not stop the
+	// service (nothing recovers a panic in its loop).
+	defer func() {
+		if r := recover(); r != nil {
+			svc.logger.Error(
+				"Panic while updating the job statistics",
+				zap.String("topic", "service"),
+				zap.String("method", "UpdateJobStatistics"),
+				zap.Any("panic", r),
+				zap.Stack("stack"),
+			)
+		}
+	}()
 	svc.mu.RLock()
 	defer svc.mu.RUnlock()
 

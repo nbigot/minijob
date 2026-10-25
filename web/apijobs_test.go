@@ -147,6 +147,25 @@ func TestEmptyPullTopicIsKept(t *testing.T) {
 	assert.JSONEq(t, `{"code":200,"message":"success","topics":["none"]}`, body)
 }
 
+func TestPullTopicNotValidUTF8(t *testing.T) {
+	// The topic of an empty pull is a Prometheus label, which must be valid UTF-8: a pull
+	// on ?topic=%FF answered 500, and stopped the server at the next job statistics. Each
+	// byte that is not valid UTF-8 is replaced with U+FFFD, as in the topic of a job.
+	app, svc := newTestServer(t)
+	status, body := send(t, app, "POST", "/api/v1/job/pull?topic=a%FF%FEb", "", "")
+	assert.Equal(t, 404, status, body)
+	_, body = send(t, app, "GET", "/api/v1/topics/", "", "")
+	assert.JSONEq(t, `{"code":200,"message":"success","topics":["a��b"]}`, body)
+	assert.NotPanics(t, svc.UpdateJobStatistics)
+
+	// the pull finds the jobs created with the same topic
+	status, body = send(t, app, "POST", "/api/v1/job/", "application/json", "{\"topic\":\"c\xff\xe2\x82d\"}")
+	require.Equal(t, 200, status, body)
+	status, body = send(t, app, "POST", "/api/v1/job/pull?topic=c%FF%E2%82d&waitTimeSeconds=5", "", "")
+	assert.Equal(t, 200, status, body)
+	assert.Contains(t, body, `"topic":"c���d"`)
+}
+
 // schemaServer runs the API with JSON schema validation and the given schema.
 func schemaServer(t *testing.T, schema string) *fiber.App {
 	t.Helper()
